@@ -113,7 +113,12 @@ class TokenizersBackend(PreTrainedTokenizerBase):
             and os.path.isfile(fast_tokenizer_file)
             and (cls is TokenizersBackend or "__init__" not in cls.__dict__ or trust_remote_code)
         ):
-            local_kwargs["tokenizer_object"] = TokenizerFast.from_file(fast_tokenizer_file)
+            if cls is TokenizersBackend:
+                # The base constructor can own this fresh file backend directly.
+                local_kwargs.pop("tokenizer_object", None)
+                local_kwargs["tokenizer_file"] = fast_tokenizer_file
+            else:
+                local_kwargs["tokenizer_object"] = TokenizerFast.from_file(fast_tokenizer_file)
             return local_kwargs
         elif fast_tokenizer_file is not None and os.path.isfile(fast_tokenizer_file):
             # we extract vocab/merges and pass decoder/pre_tokenizer/post_processor
