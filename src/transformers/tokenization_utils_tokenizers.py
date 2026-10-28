@@ -472,7 +472,9 @@ class TokenizersBackend(PreTrainedTokenizerBase):
                 self.add_tokens(tokens)
 
         try:
-            vocab_size = self._tokenizer.get_vocab_size()
+            vocab_size = self._tokenizer.get_vocab_size(with_added_tokens=False)
+            if vocab_size <= 100000:
+                vocab_size = self._tokenizer.get_vocab_size()
         except NotImplementedError:
             vocab_size = 0
 
