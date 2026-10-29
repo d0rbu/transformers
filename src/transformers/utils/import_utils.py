@@ -2547,17 +2547,36 @@ def fetch__all__(file_content) -> list[str]:
     if "__all__" not in file_content:
         return []
 
-    start_index = None
-    lines = file_content.splitlines()
-    for index, line in enumerate(lines):
-        if line.startswith("__all__"):
-            start_index = index
-
-    # There is no line starting with `__all__`
-    if start_index is None:
-        return []
-
-    lines = lines[start_index:]
+    if type(file_content) is str:
+        start_index = 0 if file_content.startswith("__all__") else -1
+        for prefix in (
+            "\n__all__",
+            "\r__all__",
+            "\v__all__",
+            "\f__all__",
+            "\x1c__all__",
+            "\x1d__all__",
+            "\x1e__all__",
+            "\x85__all__",
+            "\u2028__all__",
+            "\u2029__all__",
+        ):
+            boundary = file_content.rfind(prefix, max(0, start_index))
+            if boundary >= 0:
+                start_index = boundary + 1
+        if start_index < 0:
+            return []
+        lines = file_content[start_index:].splitlines()
+    else:
+        # Preserve existing method dispatch for externally supplied string subclasses.
+        start_index = None
+        lines = file_content.splitlines()
+        for index, line in enumerate(lines):
+            if line.startswith("__all__"):
+                start_index = index
+        if start_index is None:
+            return []
+        lines = lines[start_index:]
 
     if not lines[0].startswith("__all__"):
         raise ValueError(

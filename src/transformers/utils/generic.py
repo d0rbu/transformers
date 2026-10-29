@@ -17,6 +17,7 @@ Generic utilities
 
 from __future__ import annotations
 
+import importlib as _importlib
 import inspect
 import json
 import os
@@ -42,9 +43,26 @@ if is_torch_available():
     import torch
     from torch.types import _dtype
 
-    from ..model_debugging_utils import model_addition_debugger_context
-
     _is_torch_available = True
+
+
+def __getattr__(name):
+    if name == "__all__":
+        # Wildcard imports consume the same public namespace as the eager module.
+        return [key for key in __dir__() if not key.startswith("_")]
+    # Keep the legacy attribute without loading model debugging for tokenizer-only use.
+    if name == "model_addition_debugger_context" and _is_torch_available:
+        value = _importlib.import_module("..model_debugging_utils", __package__).model_addition_debugger_context
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__():
+    names = set(globals())
+    if _is_torch_available:
+        names.add("model_addition_debugger_context")
+    return sorted(names)
 
 
 if TYPE_CHECKING:
@@ -923,9 +941,12 @@ def merge_with_config_defaults(func):
         # Call the original forward with the updated kwargs/config
         try:
             if kwargs.get("debug_io", False):
-                with model_addition_debugger_context(
-                    self, kwargs.get("debug_io_dir", "model_debug"), kwargs.get("prune_layers")
-                ):
+                debugger_context = (
+                    globals()["model_addition_debugger_context"]
+                    if "model_addition_debugger_context" in globals()
+                    else __getattr__("model_addition_debugger_context")
+                )
+                with debugger_context(self, kwargs.get("debug_io_dir", "model_debug"), kwargs.get("prune_layers")):
                     output = func(self, *args, **kwargs)
             else:
                 output = func(self, *args, **kwargs)

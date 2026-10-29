@@ -39,8 +39,20 @@ from ...utils import (
 from .configuration_auto import AutoConfig, model_type_to_module_name, replace_list_option_in_docstrings
 
 
-if is_torch_available():
-    from ...generation import GenerationMixin
+def __getattr__(name):
+    # Preserve the legacy attribute without loading model generation for tokenizer factories.
+    if name == "GenerationMixin" and is_torch_available():
+        value = importlib.import_module("...generation", __package__).GenerationMixin
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__():
+    names = set(globals())
+    if is_torch_available():
+        names.add("GenerationMixin")
+    return sorted(names)
 
 
 logger = logging.get_logger(__name__)
@@ -544,8 +556,11 @@ def add_generation_mixin_to_remote_model(model_class):
         getattr(model_class, "prepare_inputs_for_generation")
     )
     if has_custom_generate_in_class or has_custom_prepare_inputs:
+        generation_mixin = (
+            globals()["GenerationMixin"] if "GenerationMixin" in globals() else __getattr__("GenerationMixin")
+        )
         model_class_with_generation_mixin = type(
-            model_class.__name__, (model_class, GenerationMixin), {**model_class.__dict__}
+            model_class.__name__, (model_class, generation_mixin), {**model_class.__dict__}
         )
         return model_class_with_generation_mixin
     return model_class
