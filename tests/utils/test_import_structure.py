@@ -1,4 +1,7 @@
 import os
+import subprocess
+import sys
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -42,6 +45,31 @@ class TestImportStructures(unittest.TestCase):
     base_transformers_path = Path(__file__).parent.parent.parent
     models_path = base_transformers_path / "src" / "transformers" / "models"
     models_import_structure = spread_import_structure(define_import_structure(models_path))
+
+    def test_models_import_reuses_discovery(self):
+        """The nested lazy module consumes the already discovered model tree."""
+        script = textwrap.dedent(
+            """
+            import importlib
+
+            import transformers
+            from transformers.utils.import_utils import create_import_structure_from_path
+
+            before = create_import_structure_from_path.cache_info()
+            models = importlib.import_module("transformers.models")
+            after = create_import_structure_from_path.cache_info()
+            assert after.misses == before.misses, (before, after)
+            assert after.hits > before.hits, (before, after)
+            assert after.maxsize == before.maxsize
+
+            # Both lazy namespaces retain the same public configuration object.
+            from transformers.models.gpt2 import GPT2Config
+
+            assert transformers.GPT2Config is GPT2Config
+            assert "GPT2Config" in models.__all__
+            """
+        )
+        subprocess.run([sys.executable, "-c", script], check=True)
 
     def test_definition(self):
         import_structure = define_import_structure(import_structures)

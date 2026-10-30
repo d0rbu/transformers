@@ -790,7 +790,7 @@ if TYPE_CHECKING:
 else:
     _import_structure = {k: set(v) for k, v in _import_structure.items()}
 
-    import_structure = define_import_structure(Path(__file__).parent / "models", prefix="models")
+    import_structure = define_import_structure(str(Path(__file__).parent / "models" / "__init__.py"), prefix="models")
     import_structure[frozenset({})].update(_import_structure)
 
     sys.modules[__name__] = _LazyModule(
