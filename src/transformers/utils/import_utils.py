@@ -2763,11 +2763,15 @@ def create_import_structure_from_path(module_path):
         # with the backends specified in the decorator as well as the file backends.
         exported_objects = set()
         if "@requires" in file_content:
+            # Preserve overridden split/startswith dispatch on supplied string subclasses.
+            plain_content = type(file_content) is str
             lines = file_content.split("\n")
             for index, line in enumerate(lines):
                 # This allows exporting items with other decorators. We'll take a look
                 # at the line that follows at the same indentation level.
-                if line.startswith((" ", "\t", "@", ")")) and not line.startswith("@requires"):
+                if (
+                    (line and line[0] in " \t@)") if plain_content else line.startswith((" ", "\t", "@", ")"))
+                ) and not line.startswith("@requires"):
                     continue
 
                 # Skipping line enables putting whatever we want between the
