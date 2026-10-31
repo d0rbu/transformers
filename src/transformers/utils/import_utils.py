@@ -2903,7 +2903,10 @@ def spread_import_structure(nested_import_structure):
 
     """
 
+    moved = False
+
     def propagate_frozenset(unordered_import_structure):
+        nonlocal moved
         frozenset_first_import_structure = {}
         for _key, _value in unordered_import_structure.items():
             # If the value is not a dict but a string, no need for custom manipulation
@@ -2911,6 +2914,7 @@ def spread_import_structure(nested_import_structure):
                 frozenset_first_import_structure[_key] = _value
 
             elif any(isinstance(v, frozenset) for v in _value):
+                moved = True
                 for k, v in _value.items():
                     if isinstance(k, frozenset):
                         # Here we want to switch around _key and k to propagate k upstream if it is a frozenset
@@ -2969,7 +2973,10 @@ def spread_import_structure(nested_import_structure):
     # 6 is a number that gives us sufficient depth to go through all files and foreseeable folder depths
     # while not taking too long to parse.
     for i in range(6):
+        moved = False
         ordered_import_structure = propagate_frozenset(ordered_import_structure)
+        if not moved:
+            break
 
     # We then flatten the dict so that it references a module path.
     flattened_import_structure = {}
