@@ -2603,9 +2603,6 @@ def fetch__all__(file_content) -> list[str]:
     Returns None if not defined, otherwise returns a list of strings.
     """
 
-    if "__all__" not in file_content:
-        return []
-
     if type(file_content) is str:
         start_index = file_content.rfind("__all__")
         if start_index > 0 and file_content[start_index - 1] not in "\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029":
@@ -2630,6 +2627,8 @@ def fetch__all__(file_content) -> list[str]:
         lines = file_content[start_index:].splitlines()
     else:
         # Preserve existing method dispatch for externally supplied string subclasses.
+        if "__all__" not in file_content:
+            return []
         start_index = None
         lines = file_content.splitlines()
         for index, line in enumerate(lines):

@@ -43,6 +43,43 @@ class FetchAllSuffixTest(unittest.TestCase):
 
         self.assertEqual(fetch__all__(CustomLines('__all__ = ["Ignored"]')), ["Override"])
 
+    def test_no_export_declaration(self):
+        for text in ("", "ordinary source", "\u2028ordinary\u2029source"):
+            with self.subTest(text=text):
+                self.assertEqual(fetch__all__(text), [])
+
+    def test_external_membership_controls_splitlines(self):
+        calls = []
+
+        class CustomContent(str):
+            def __contains__(self, value):
+                calls.append(("contains", value))
+                return bool(self)
+
+            def splitlines(self, *args, **kwargs):
+                calls.append(("splitlines",))
+                return ['__all__ = ["Override"]']
+
+        self.assertEqual(fetch__all__(CustomContent("")), [])
+        self.assertEqual(calls, [("contains", "__all__")])
+        calls.clear()
+        self.assertEqual(fetch__all__(CustomContent("no literal declaration")), ["Override"])
+        self.assertEqual(calls, [("contains", "__all__"), ("splitlines",)])
+
+    def test_external_membership_error_propagates(self):
+        error = ValueError("external membership")
+
+        class CustomContent(str):
+            def __contains__(self, value):
+                raise error
+
+            def splitlines(self, *args, **kwargs):
+                raise AssertionError("splitlines must not run after membership fails")
+
+        with self.assertRaises(ValueError) as caught:
+            fetch__all__(CustomContent("__all__"))
+        self.assertIs(caught.exception, error)
+
 
 if __name__ == "__main__":
     unittest.main()
