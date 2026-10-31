@@ -23,13 +23,19 @@ import json
 import os
 import re
 import warnings
-from collections import OrderedDict, UserDict
-from collections.abc import Callable, Iterable, MutableMapping
-from contextlib import AbstractContextManager, ExitStack, nullcontext
-from dataclasses import fields, is_dataclass
+from collections import OrderedDict as OrderedDict
+from collections import UserDict
+from collections.abc import Callable, MutableMapping
+from collections.abc import Iterable as Iterable
+from contextlib import AbstractContextManager, ExitStack
+from contextlib import nullcontext as nullcontext
+from dataclasses import fields as fields
+from dataclasses import is_dataclass as is_dataclass
 from enum import Enum
-from functools import partial, wraps
-from typing import TYPE_CHECKING, Any, TypedDict
+from functools import partial as partial
+from functools import wraps
+from typing import TYPE_CHECKING, Any
+from typing import TypedDict as TypedDict
 
 import numpy as np
 
@@ -37,19 +43,25 @@ from ..utils import logging
 from .import_utils import is_mlx_available, is_torch_available, is_torch_fx_proxy
 
 
-_is_torch_available = False
-if is_torch_available():
-    # required for @can_return_tuple decorator to work with torchdynamo
-    import torch
-    from torch.types import _dtype
-
-    _is_torch_available = True
+_is_torch_available = is_torch_available()
 
 
-def __getattr__(name):
+_MODEL_OUTPUT_NAMES = ("ModelOutput", "TransformersKwargs", "maybe_autocast")
+_MODEL_OUTPUT_TORCH_NAMES = ("torch", "_dtype", "_torch_pytree", "_model_output_flatten", "_model_output_unflatten")
+
+
+def __getattr__(name: str) -> Any:
     if name == "__all__":
         # Wildcard imports consume the same public namespace as the eager module.
         return [key for key in __dir__() if not key.startswith("_")]
+    if name in _MODEL_OUTPUT_NAMES or (_is_torch_available and name in _MODEL_OUTPUT_TORCH_NAMES):
+        module = _importlib.import_module("._model_output", __package__)
+        for alias in _MODEL_OUTPUT_NAMES:
+            globals().setdefault(alias, getattr(module, alias))
+        if _is_torch_available:
+            for alias in _MODEL_OUTPUT_TORCH_NAMES:
+                globals().setdefault(alias, getattr(module, alias))
+        return globals()[name]
     # Keep the legacy attribute without loading model debugging for tokenizer-only use.
     if name == "model_addition_debugger_context" and _is_torch_available:
         value = _importlib.import_module("..model_debugging_utils", __package__).model_addition_debugger_context
@@ -58,15 +70,22 @@ def __getattr__(name):
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-def __dir__():
-    names = set(globals())
+def __dir__() -> list[str]:
+    names = set(globals()) | set(_MODEL_OUTPUT_NAMES)
     if _is_torch_available:
+        names.update(_MODEL_OUTPUT_TORCH_NAMES)
         names.add("model_addition_debugger_context")
     return sorted(names)
 
 
 if TYPE_CHECKING:
     from torch import nn
+
+    from ._model_output import ModelOutput as ModelOutput
+    from ._model_output import TransformersKwargs as TransformersKwargs
+    from ._model_output import _model_output_flatten as _model_output_flatten
+    from ._model_output import _model_output_unflatten as _model_output_unflatten
+    from ._model_output import maybe_autocast as maybe_autocast
 
 
 logger = logging.get_logger(__name__)
@@ -154,14 +173,22 @@ def is_torch_tensor(x) -> bool:
     """
     Tests if `x` is a torch tensor or not. Safe to call even if torch is not installed.
     """
-    return _is_torch_available and isinstance(x, torch.Tensor)
+    if not _is_torch_available:
+        return False
+    import torch
+
+    return isinstance(x, torch.Tensor)
 
 
 def is_torch_device(x) -> bool:
     """
     Tests if `x` is a torch device or not. Safe to call even if torch is not installed.
     """
-    return _is_torch_available and isinstance(x, torch.device)
+    if not _is_torch_available:
+        return False
+    import torch
+
+    return isinstance(x, torch.device)
 
 
 def is_torch_dtype(x) -> bool:
@@ -170,6 +197,8 @@ def is_torch_dtype(x) -> bool:
     """
     if not _is_torch_available:
         return False
+    import torch
+
     if isinstance(x, str):
         if hasattr(torch, x):
             x = getattr(torch, x)
@@ -196,30 +225,6 @@ def _is_tensor_or_array_like(value):
         return _is_tensor_or_array_like(value[0])
 
     return False
-
-
-def maybe_autocast(
-    device_type: str,
-    dtype: _dtype | None = None,
-    enabled: bool = True,
-    cache_enabled: bool | None = None,
-):
-    """
-    Context manager that only autocasts if:
-
-    - `autocast` is already enabled in this context
-    - Or this call to `maybe_autocast` has `enabled=True`
-
-    This prevents `autocast` being added to the graph when it is effectively a no-op.
-    Which makes graph splitting in `torch.compile` more flexible as it removes the
-    requirement that partition IDs be monotonically increasing.
-    """
-    if device_type == "meta":
-        return nullcontext()
-    if torch.is_autocast_enabled(device_type) or enabled:
-        return torch.autocast(device_type, dtype=dtype, enabled=enabled, cache_enabled=cache_enabled)
-    else:
-        return nullcontext()
 
 
 def _is_mlx(x):
@@ -338,173 +343,6 @@ def safe_load_json_file(json_file: str):
     except json.JSONDecodeError:
         raise OSError(f"It looks like the config file at '{json_file}' is not a valid JSON file.")
     return config_dict
-
-
-class ModelOutput(OrderedDict):
-    """
-    Base class for all model outputs as dataclass. Has a `__getitem__` that allows indexing by integer or slice (like a
-    tuple) or strings (like a dictionary) that will ignore the `None` attributes. Otherwise behaves like a regular
-    python dictionary.
-
-    <Tip warning={true}>
-
-    You can't unpack a `ModelOutput` directly. Use the [`~utils.ModelOutput.to_tuple`] method to convert it to a tuple
-    before.
-
-    </Tip>
-    """
-
-    def __init_subclass__(cls) -> None:
-        """Register subclasses as pytree nodes.
-
-        This is necessary to synchronize gradients when using `torch.nn.parallel.DistributedDataParallel` with
-        `static_graph=True` with modules that output `ModelOutput` subclasses.
-        """
-        if _is_torch_available:
-            from torch.utils._pytree import register_pytree_node
-
-            register_pytree_node(
-                cls,
-                _model_output_flatten,
-                partial(_model_output_unflatten, output_type=cls),
-                serialized_type_name=f"{cls.__module__}.{cls.__name__}",
-            )
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-        # Subclasses of ModelOutput must use the @dataclass decorator
-        # This check is done in __init__ because the @dataclass decorator operates after __init_subclass__
-        # issubclass() would return True for issubclass(ModelOutput, ModelOutput) when False is needed
-        # Just need to check that the current class is not ModelOutput
-        is_modeloutput_subclass = self.__class__ != ModelOutput
-
-        if is_modeloutput_subclass and not is_dataclass(self):
-            raise TypeError(
-                f"{self.__module__}.{self.__class__.__name__} is not a dataclass."
-                " This is a subclass of ModelOutput and so must use the @dataclass decorator."
-            )
-
-    def __post_init__(self):
-        """Check the ModelOutput dataclass.
-
-        Only occurs if @dataclass decorator has been used.
-        """
-        class_fields = fields(self)
-
-        # Safety and consistency checks
-        if not len(class_fields):
-            raise ValueError(f"{self.__class__.__name__} has no fields.")
-        if not all(field.default is None for field in class_fields[1:]):
-            raise ValueError(f"{self.__class__.__name__} should not have more than one required field.")
-
-        first_field = getattr(self, class_fields[0].name)
-        other_fields_are_none = all(getattr(self, field.name) is None for field in class_fields[1:])
-
-        if other_fields_are_none and not is_tensor(first_field):
-            if isinstance(first_field, dict):
-                iterator = first_field.items()
-                first_field_iterator = True
-            else:
-                try:
-                    iterator = iter(first_field)
-                    first_field_iterator = True
-                except TypeError:
-                    first_field_iterator = False
-
-            # if we provided an iterator as first field and the iterator is a (key, value) iterator
-            # set the associated fields
-            if first_field_iterator:
-                # reset first field to None and remove it from the internal dictionary
-                setattr(self, class_fields[0].name, None)
-                super().__delitem__(class_fields[0].name)
-                for idx, element in enumerate(iterator):
-                    if not isinstance(element, (list, tuple)) or len(element) != 2 or not isinstance(element[0], str):
-                        if idx == 0:
-                            # If we do not have an iterator of key/values, set it as attribute
-                            self[class_fields[0].name] = first_field
-                        else:
-                            # If we have a mixed iterator, raise an error
-                            raise ValueError(
-                                f"Cannot set key/value for {element}. It needs to be a tuple (key, value)."
-                            )
-                        break
-                    setattr(self, element[0], element[1])
-                    if element[1] is not None:
-                        self[element[0]] = element[1]
-            elif first_field is not None:
-                self[class_fields[0].name] = first_field
-        else:
-            for field in class_fields:
-                v = getattr(self, field.name)
-                if v is not None:
-                    self[field.name] = v
-
-    def __delitem__(self, *args, **kwargs):
-        raise Exception(f"You cannot use ``__delitem__`` on a {self.__class__.__name__} instance.")
-
-    def setdefault(self, *args, **kwargs):
-        raise Exception(f"You cannot use ``setdefault`` on a {self.__class__.__name__} instance.")
-
-    def pop(self, *args, **kwargs):
-        raise Exception(f"You cannot use ``pop`` on a {self.__class__.__name__} instance.")
-
-    def update(self, *args, **kwargs):
-        raise Exception(f"You cannot use ``update`` on a {self.__class__.__name__} instance.")
-
-    def __getitem__(self, k):
-        if isinstance(k, str):
-            inner_dict = dict(self.items())
-            return inner_dict[k]
-        else:
-            return self.to_tuple()[k]
-
-    def __setattr__(self, name, value):
-        field_names = {field.name for field in fields(self)}
-        if name in field_names and value is not None:
-            # Don't call self.__setitem__ to avoid recursion errors
-            super().__setitem__(name, value)
-        super().__setattr__(name, value)
-
-    def __setitem__(self, key, value):
-        # Will raise a KeyException if needed
-        super().__setitem__(key, value)
-        # Don't call self.__setattr__ to avoid recursion errors
-        super().__setattr__(key, value)
-
-    def __reduce__(self):
-        if not is_dataclass(self):
-            return super().__reduce__()
-        callable, _args, *remaining = super().__reduce__()
-        args = tuple(getattr(self, field.name) for field in fields(self))
-        return callable, args, *remaining
-
-    def to_tuple(self) -> tuple:
-        """
-        Convert self to a tuple containing all the attributes/keys that are not `None`.
-        """
-        return tuple(self[k] for k in self.keys())
-
-
-if _is_torch_available:
-    import torch.utils._pytree as _torch_pytree
-
-    def _model_output_flatten(output: ModelOutput) -> tuple[list[Any], _torch_pytree.Context]:
-        return list(output.values()), list(output.keys())
-
-    def _model_output_unflatten(
-        values: Iterable[Any],
-        context: _torch_pytree.Context,
-        output_type: type[ModelOutput] | None = None,
-    ) -> ModelOutput:
-        return output_type(**dict(zip(context, values)))
-
-    _torch_pytree.register_pytree_node(
-        ModelOutput,
-        _model_output_flatten,
-        partial(_model_output_unflatten, output_type=ModelOutput),
-        serialized_type_name=f"{ModelOutput.__module__}.{ModelOutput.__name__}",
-    )
 
 
 class ExplicitEnum(str, Enum):
@@ -671,6 +509,7 @@ def torch_int(x):
     """
     if not _is_torch_available:
         return int(x)
+    import torch
 
     return x.to(torch.int64) if torch.jit.is_tracing() and isinstance(x, torch.Tensor) else int(x)
 
@@ -681,6 +520,7 @@ def torch_float(x):
     """
     if not _is_torch_available:
         return int(x)
+    import torch
 
     return x.to(torch.float32) if torch.jit.is_tracing() and isinstance(x, torch.Tensor) else int(x)
 
@@ -762,45 +602,6 @@ def filter_out_non_signature_kwargs(extra: list | None = None):
         return wrapper
 
     return decorator
-
-
-class TransformersKwargs(TypedDict, total=False):
-    """
-    Keyword arguments to be passed to the forward pass of a `PreTrainedModel`.
-
-    Attributes:
-        num_items_in_batch (`Optional[torch.Tensor]`, *optional*):
-            Number of items in the batch. It is recommended to pass it when you are doing gradient accumulation.
-        output_hidden_states (`Optional[bool]`, *optional*):
-            Most of the models support outputting all hidden states computed during the forward pass.
-        output_attentions (`Optional[bool]`, *optional*):
-            Turn this on to return the intermediary attention scores.
-        output_router_logits (`Optional[bool]`, *optional*):
-            For MoE models, this allows returning the router logits to compute the loss.
-        cu_seq_lens_q (`torch.LongTensor`, *optional*)
-            Gets cumulative sequence length for query state.
-        cu_seq_lens_k (`torch.LongTensor`, *optional*)
-            Gets cumulative sequence length for key state.
-        max_length_q (`int`, *optional*):
-            Maximum sequence length for query state.
-        max_length_k (`int`, *optional*):
-            Maximum sequence length for key state.
-        position_ids (`torch.LongTensor`, *optional*)
-            Indices of positions of each input sequence tokens.
-        is_causal (`bool`, *optional*)
-            Can be set to False to enable bi-directional attention, i.e. use decoder Attention modules as encoders.
-    """
-
-    num_items_in_batch: torch.Tensor | None
-    output_hidden_states: bool | None
-    output_attentions: bool | None
-    output_router_logits: bool | None
-    cu_seq_lens_q: torch.LongTensor | None
-    cu_seq_lens_k: torch.LongTensor | None
-    max_length_q: int | None
-    max_length_k: int | None
-    position_ids: torch.LongTensor | None
-    is_causal: bool | None
 
 
 def is_timm_config_dict(config_dict: dict[str, Any]) -> bool:

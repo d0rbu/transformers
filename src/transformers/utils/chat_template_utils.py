@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import importlib as _importlib
 import inspect
 import json
 import re
@@ -22,6 +23,7 @@ from copy import deepcopy
 from datetime import datetime
 from functools import lru_cache
 from inspect import isfunction
+from typing import TYPE_CHECKING as _TYPE_CHECKING
 from typing import Any, Literal, Union, get_args, get_origin, get_type_hints, no_type_check
 
 from packaging import version
@@ -31,6 +33,9 @@ from .import_utils import is_jinja_available, is_torch_available, is_vision_avai
 
 
 logger = logging.get_logger(__name__)
+
+if _TYPE_CHECKING:
+    from torch import Tensor as Tensor
 
 if is_jinja_available():
     import jinja2
@@ -47,8 +52,22 @@ else:
 if is_vision_available():
     from PIL.Image import Image
 
-if is_torch_available():
-    from torch import Tensor
+
+def __getattr__(name: str) -> Any:
+    if name == "__all__":
+        return [key for key in __dir__() if not key.startswith("_")]
+    if name == "Tensor" and is_torch_available():
+        if name not in globals():
+            globals()[name] = _importlib.import_module("torch").Tensor
+        return globals()[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    names = set(globals())
+    if is_torch_available():
+        names.add("Tensor")
+    return sorted(names)
 
 
 ChatType = list[dict[str, Any]]
@@ -93,7 +112,7 @@ def _get_json_schema_type(param_type: type) -> dict[str, str]:
     if is_vision_available():
         type_mapping[Image] = {"type": "image"}
     if is_torch_available():
-        type_mapping[Tensor] = {"type": "audio"}
+        type_mapping[__getattr__("Tensor")] = {"type": "audio"}
     return type_mapping.get(param_type, {"type": "object"})
 
 

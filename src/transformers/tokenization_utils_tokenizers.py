@@ -17,11 +17,13 @@ see tokenization_utils.py
 """
 
 import copy
+import importlib as _importlib
 import json
 import os
 from collections import defaultdict
 from collections.abc import Iterable
 from shutil import copyfile
+from typing import TYPE_CHECKING as _TYPE_CHECKING
 from typing import Any
 
 import tokenizers.pre_tokenizers as pre_tokenizers_fast
@@ -35,9 +37,6 @@ from tokenizers.trainers import BpeTrainer, UnigramTrainer, WordLevelTrainer, Wo
 
 from transformers.utils.hub import cached_file
 
-from .convert_slow_tokenizer import SpmConverter
-from .integrations.ggml import convert_gguf_tokenizer
-from .modeling_gguf_pytorch_utils import load_gguf_checkpoint
 from .tokenization_utils_base import (
     INIT_TOKENIZER_DOCSTRING,
     BatchEncoding,
@@ -257,7 +256,7 @@ class TokenizersBackend(PreTrainedTokenizerBase):
                                 vocab[new_token] = vocab.pop(current_token)
                                 id_to_token[token_id] = new_token
 
-                    tokenizer_object = SpmConverter.build_tokenizer_from_spm_proto(
+                    tokenizer_object = __getattr__("SpmConverter").build_tokenizer_from_spm_proto(
                         proto=extractor.proto,
                         vocab=vocab,
                         merges=merges,
@@ -360,11 +359,11 @@ class TokenizersBackend(PreTrainedTokenizerBase):
         elif gguf_file is not None:
             # We need to convert a slow tokenizer to build the backend
             gguf_path = cached_file(kwargs.get("name_or_path", ""), gguf_file, **kwargs)
-            gguf_param = load_gguf_checkpoint(gguf_path)
+            gguf_param = __getattr__("load_gguf_checkpoint")(gguf_path)
             architecture = gguf_param["config"]["model_type"]
             tokenizer_dict = gguf_param["tokenizer"]
             tokenizer_config = gguf_param["tokenizer_config"]
-            fast_tokenizer, additional_kwargs = convert_gguf_tokenizer(architecture, tokenizer_dict)
+            fast_tokenizer, additional_kwargs = __getattr__("convert_gguf_tokenizer")(architecture, tokenizer_dict)
             kwargs.update(tokenizer_config)
             if len(additional_kwargs) > 0:
                 kwargs.update(additional_kwargs)
@@ -1391,3 +1390,33 @@ class TokenizersBackend(PreTrainedTokenizerBase):
 
 # Backward-compatible alias: allow referring to TokenizersBackend as PreTrainedTokenizerFast
 PreTrainedTokenizerFast = TokenizersBackend
+
+
+if _TYPE_CHECKING:
+    from .convert_slow_tokenizer import SpmConverter as SpmConverter
+    from .integrations.ggml import convert_gguf_tokenizer as convert_gguf_tokenizer
+    from .modeling_gguf_pytorch_utils import load_gguf_checkpoint as load_gguf_checkpoint
+
+
+_LAZY_ATTRIBUTES = {
+    "SpmConverter": (".convert_slow_tokenizer", "SpmConverter"),
+    "convert_gguf_tokenizer": (".integrations.ggml", "convert_gguf_tokenizer"),
+    "load_gguf_checkpoint": (".modeling_gguf_pytorch_utils", "load_gguf_checkpoint"),
+}
+
+
+def __getattr__(name: str) -> Any:
+    if name == "__all__":
+        return [key for key in __dir__() if not key.startswith("_")]
+    if name in globals():
+        return globals()[name]
+    if name in _LAZY_ATTRIBUTES:
+        module, attribute = _LAZY_ATTRIBUTES[name]
+        value = getattr(_importlib.import_module(module, __package__), attribute)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(_LAZY_ATTRIBUTES))
