@@ -2607,22 +2607,24 @@ def fetch__all__(file_content) -> list[str]:
         return []
 
     if type(file_content) is str:
-        start_index = 0 if file_content.startswith("__all__") else -1
-        for prefix in (
-            "\n__all__",
-            "\r__all__",
-            "\v__all__",
-            "\f__all__",
-            "\x1c__all__",
-            "\x1d__all__",
-            "\x1e__all__",
-            "\x85__all__",
-            "\u2028__all__",
-            "\u2029__all__",
-        ):
-            boundary = file_content.rfind(prefix, max(0, start_index))
-            if boundary >= 0:
-                start_index = boundary + 1
+        start_index = file_content.rfind("__all__")
+        if start_index > 0 and file_content[start_index - 1] not in "\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029":
+            start_index = 0 if file_content.startswith("__all__") else -1
+            for prefix in (
+                "\n__all__",
+                "\r__all__",
+                "\v__all__",
+                "\f__all__",
+                "\x1c__all__",
+                "\x1d__all__",
+                "\x1e__all__",
+                "\x85__all__",
+                "\u2028__all__",
+                "\u2029__all__",
+            ):
+                boundary = file_content.rfind(prefix, max(0, start_index))
+                if boundary >= 0:
+                    start_index = boundary + 1
         if start_index < 0:
             return []
         lines = file_content[start_index:].splitlines()
