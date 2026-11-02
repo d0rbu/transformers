@@ -30,6 +30,7 @@ from collections.abc import Callable
 from enum import Enum
 from functools import lru_cache
 from itertools import chain
+from threading import RLock
 from types import ModuleType
 from typing import Any
 
@@ -2404,6 +2405,70 @@ class _LazyModule(ModuleType):
 
     def __reduce__(self):
         return (self.__class__, (self._name, self.__file__, self._import_structure))
+
+
+class _DeferredLazyModule(_LazyModule):
+    """Keep explicit submodule imports independent of whole-tree export discovery."""
+
+    def __init__(
+        self,
+        name: str,
+        module_file: str,
+        import_structure: IMPORT_STRUCTURE_T,
+        module_spec: importlib.machinery.ModuleSpec | None = None,
+        extra_objects: dict[str, object] | None = None,
+        explicit_import_shortcut: dict[str, list[str]] | None = None,
+        *,
+        deferred_import_structure: Callable[[], IMPORT_STRUCTURE_T] | None = None,
+    ):
+        super().__init__(name, module_file, import_structure, module_spec, extra_objects, explicit_import_shortcut)
+        self._deferred_import_structure = deferred_import_structure
+        self._import_structure_lock = RLock()
+        if deferred_import_structure is not None:
+            del self.__all__
+
+    def _materialize_import_structure(self) -> None:
+        with self._import_structure_lock:
+            factory = self._deferred_import_structure
+            if factory is None:
+                return
+            # Construct separately so a failed discovery never leaves partial
+            # maps in the live module. Already imported attributes stay intact.
+            expanded = _LazyModule(
+                self._name,
+                self.__file__,
+                factory(),
+                self.__spec__,
+                self._objects,
+                self._explicit_import_shortcut,
+            )
+            self._modules = expanded._modules
+            self._class_to_module = expanded._class_to_module
+            self._object_missing_backend = expanded._object_missing_backend
+            self._import_structure = expanded._import_structure
+            self.__all__ = expanded.__all__
+            self._deferred_import_structure = None
+
+    def __getattr__(self, name: str) -> Any:
+        if name == "__all__":
+            self._materialize_import_structure()
+            return self.__dict__[name]
+        if (
+            not name.startswith("__")
+            and name not in self._objects
+            and name not in self._class_to_module
+            and name not in self._modules
+        ):
+            self._materialize_import_structure()
+        return super().__getattr__(name)
+
+    def __dir__(self):
+        self._materialize_import_structure()
+        return super().__dir__()
+
+    def __reduce__(self):
+        self._materialize_import_structure()
+        return super().__reduce__()
 
 
 class OptionalDependencyNotAvailable(BaseException):
