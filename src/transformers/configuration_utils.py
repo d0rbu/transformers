@@ -15,6 +15,7 @@
 """Configuration base class and utilities."""
 
 import copy
+import importlib as _importlib
 import json
 import math
 import os
@@ -30,7 +31,6 @@ from packaging import version
 from . import __version__
 from .dynamic_module_utils import custom_object_save
 from .generation.configuration_utils import GenerationConfig
-from .modeling_gguf_pytorch_utils import load_gguf_checkpoint
 from .modeling_rope_utils import RotaryEmbeddingConfigMixin
 from .utils import (
     CONFIG_NAME,
@@ -46,6 +46,8 @@ from .utils.generic import is_timm_config_dict
 
 if TYPE_CHECKING:
     import torch
+
+    from .modeling_gguf_pytorch_utils import load_gguf_checkpoint as load_gguf_checkpoint
 
 
 logger = logging.get_logger(__name__)
@@ -742,7 +744,7 @@ class PreTrainedConfig(PushToHubMixin, RotaryEmbeddingConfigMixin):
 
         try:
             if gguf_file:
-                config_dict = load_gguf_checkpoint(resolved_config_file, return_tensors=False)["config"]
+                config_dict = __getattr__("load_gguf_checkpoint")(resolved_config_file, return_tensors=False)["config"]
             else:
                 # Load config dict
                 config_dict = cls._dict_from_json_file(resolved_config_file)
@@ -1330,3 +1332,23 @@ def layer_type_validation(layer_types: list[str], num_hidden_layers: int | None 
             f"`num_hidden_layers` ({num_hidden_layers}) must be equal to the number of layer types "
             f"({len(layer_types)})"
         )
+
+
+_LAZY_ATTRIBUTES = {"load_gguf_checkpoint": (".modeling_gguf_pytorch_utils", "load_gguf_checkpoint")}
+
+
+def __getattr__(name: str) -> Any:
+    if name == "__all__":
+        return [key for key in __dir__() if not key.startswith("_")]
+    if name in globals():
+        return globals()[name]
+    if name in _LAZY_ATTRIBUTES:
+        module, attribute = _LAZY_ATTRIBUTES[name]
+        value = getattr(_importlib.import_module(module, __package__), attribute)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(_LAZY_ATTRIBUTES))

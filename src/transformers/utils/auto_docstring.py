@@ -13,12 +13,15 @@
 # limitations under the License.
 from __future__ import annotations
 
+import importlib as _importlib
 import inspect
 import os
 from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path
 from types import UnionType
+from typing import TYPE_CHECKING as _TYPE_CHECKING
+from typing import Any as _Any
 from typing import ClassVar, Union, get_args, get_origin
 
 import regex as re
@@ -29,7 +32,6 @@ from .doc import (
     PIPELINE_TASKS_TO_SAMPLE_DOCSTRINGS,
     PT_SAMPLE_DOCSTRINGS,
 )
-from .generic import ModelOutput
 
 
 PATH_TO_TRANSFORMERS = Path("src").resolve() / "transformers"
@@ -3984,7 +3986,7 @@ def _process_returns_section(func_documentation, sig, config_class, indent_level
         return_docstring = set_min_indent(return_docstring, indent_level + 4)
     # Otherwise, generate return docstring from return annotation if available
     elif sig.return_annotation is not None and sig.return_annotation != inspect._empty:
-        add_intro, return_annotation = contains_type(sig.return_annotation, ModelOutput)
+        add_intro, return_annotation = contains_type(sig.return_annotation, __getattr__("ModelOutput"))
         return_docstring = _prepare_return_docstring(return_annotation, config_class, add_intro=add_intro)
         # PT_RETURN_INTRODUCTION already starts with \n, so only add blank line if it doesn't start with one
         if not return_docstring.startswith("\n"):
@@ -4504,3 +4506,27 @@ def auto_docstring(obj=None, *, custom_intro=None, custom_args=None, checkpoint=
         return auto_docstring_decorator(obj)
 
     return auto_docstring_decorator
+
+
+if _TYPE_CHECKING:
+    from .generic import ModelOutput as ModelOutput
+
+
+_LAZY_ATTRIBUTES = {"ModelOutput": (".generic", "ModelOutput")}
+
+
+def __getattr__(name: str) -> _Any:
+    if name == "__all__":
+        return [key for key in __dir__() if not key.startswith("_")]
+    if name in globals():
+        return globals()[name]
+    if name in _LAZY_ATTRIBUTES:
+        module, attribute = _LAZY_ATTRIBUTES[name]
+        value = getattr(_importlib.import_module(module, __package__), attribute)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(_LAZY_ATTRIBUTES))

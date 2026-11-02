@@ -18,13 +18,13 @@ import json
 import os
 import sys
 from collections import OrderedDict
+from typing import TYPE_CHECKING as _TYPE_CHECKING
 from typing import Any
 
 from transformers.utils.import_utils import is_mistral_common_available
 
 from ...configuration_utils import PreTrainedConfig
 from ...dynamic_module_utils import get_class_from_dynamic_module, resolve_trust_remote_code
-from ...modeling_gguf_pytorch_utils import load_gguf_checkpoint
 from ...tokenization_utils_base import TOKENIZER_CONFIG_FILE
 from ...utils import (
     extract_commit_hash,
@@ -56,6 +56,26 @@ else:
     SentencePieceBackend = None
 
 logger = logging.get_logger(__name__)
+
+if _TYPE_CHECKING:
+    from ...modeling_gguf_pytorch_utils import load_gguf_checkpoint as load_gguf_checkpoint
+
+
+def __getattr__(name: str) -> Any:
+    if name == "__all__":
+        return [key for key in __dir__() if not key.startswith("_")]
+    if name == "load_gguf_checkpoint":
+        if name not in globals():
+            globals()[name] = importlib.import_module(
+                "...modeling_gguf_pytorch_utils", __package__
+            ).load_gguf_checkpoint
+        return globals()[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | {"load_gguf_checkpoint"})
+
 
 # V5: Simplified mapping - single tokenizer class per model type (always prefer tokenizers-based)
 REGISTERED_TOKENIZER_CLASSES: dict[str, type[Any]] = {}
@@ -677,7 +697,7 @@ class AutoTokenizer:
 
         if gguf_file:
             gguf_path = cached_file(pretrained_model_name_or_path, gguf_file, **kwargs)
-            config_dict = load_gguf_checkpoint(gguf_path, return_tensors=False)["config"]
+            config_dict = __getattr__("load_gguf_checkpoint")(gguf_path, return_tensors=False)["config"]
             config = AutoConfig.for_model(**config_dict)
         elif config is None:
             try:

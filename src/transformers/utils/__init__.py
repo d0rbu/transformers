@@ -14,7 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import importlib as _importlib
 from functools import lru_cache
+from typing import TYPE_CHECKING as _TYPE_CHECKING
+from typing import Any as _Any
 
 from packaging import version
 
@@ -44,10 +47,8 @@ from .doc import (
 from .generic import (
     ContextManagers,
     ExplicitEnum,
-    ModelOutput,
     PaddingStrategy,
     TensorType,
-    TransformersKwargs,
     _is_tensor_or_array_like,
     can_return_loss,
     can_return_tuple,
@@ -250,7 +251,6 @@ from .import_utils import (
     torch_compilable_check,
     torch_only_method,
 )
-from .kernel_config import KernelConfig
 from .peft_utils import (
     ADAPTER_CONFIG_NAME,
     ADAPTER_SAFE_WEIGHTS_NAME,
@@ -330,3 +330,36 @@ def get_available_devices() -> frozenset[str]:
         devices.add("musa")
 
     return frozenset(devices)
+
+
+if _TYPE_CHECKING:
+    from . import kernel_config as kernel_config
+    from .generic import ModelOutput as ModelOutput
+    from .generic import TransformersKwargs as TransformersKwargs
+    from .kernel_config import KernelConfig as KernelConfig
+
+
+_LAZY_ATTRIBUTES = {
+    "ModelOutput": (".generic", "ModelOutput"),
+    "TransformersKwargs": (".generic", "TransformersKwargs"),
+    "KernelConfig": (".kernel_config", "KernelConfig"),
+}
+
+
+def __getattr__(name: str) -> _Any:
+    if name == "__all__":
+        return [key for key in __dir__() if not key.startswith("_")]
+    if name in globals():
+        return globals()[name]
+    if name == "kernel_config":
+        return _importlib.import_module(".kernel_config", __package__)
+    if name in _LAZY_ATTRIBUTES:
+        module, attribute = _LAZY_ATTRIBUTES[name]
+        value = getattr(_importlib.import_module(module, __package__), attribute)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(_LAZY_ATTRIBUTES) | {"kernel_config"})
