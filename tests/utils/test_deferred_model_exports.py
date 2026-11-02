@@ -129,6 +129,9 @@ assert models._deferred_import_structure is not None
 assert create_import_structure_from_path.cache_info().misses < 100
 expected_root = _LazyModule(root.__name__, root.__file__, root._deferred_import_structure(), root.__spec__, root._objects)
 expected_models = _LazyModule(models.__name__, models.__file__, models._deferred_import_structure(), models.__spec__)
+for name, module in root._class_to_module.items():
+    assert expected_root._class_to_module[name] == module, name
+    assert expected_root._object_missing_backend.get(name) == root._object_missing_backend.get(name), name
 for actual, expected in [(root, expected_root), (models, expected_models)]:
     assert actual.__all__ == expected.__all__
     assert actual._class_to_module == expected._class_to_module
