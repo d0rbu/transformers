@@ -794,10 +794,17 @@ else:
         import_structure[frozenset({})].update(_import_structure)
         return import_structure
 
+    # AutoTokenizer resolves shared tokenizer aliases through the root namespace.
+    # Make GPT2's exports available without discovering every unrelated model.
+    _initial_import_structure = define_import_structure(
+        Path(__file__).parent / "models" / "gpt2", prefix="models.gpt2"
+    )
+    _initial_import_structure.setdefault(frozenset(), {}).update(_import_structure)
+
     sys.modules[__name__] = _DeferredLazyModule(
         __name__,
         globals()["__file__"],
-        {frozenset(): _import_structure},
+        _initial_import_structure,
         module_spec=__spec__,
         extra_objects={"__version__": __version__},
         deferred_import_structure=_model_import_structure,

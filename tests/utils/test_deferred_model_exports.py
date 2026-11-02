@@ -149,3 +149,41 @@ assert GPT2Tokenizer is _pretrain_encoding.GPT2Tokenizer
         ],
         check=True,
     )
+
+
+def test_shared_gpt2_tokenizer_resolution_keeps_root_discovery_deferred():
+    subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-B",
+            "-c",
+            """
+import sys
+import transformers as root
+from transformers.models.auto.tokenization_auto import tokenizer_class_from_name
+from transformers.utils.import_utils import create_import_structure_from_path
+initial_factory = root._deferred_import_structure
+assert initial_factory is not None
+resolved = tokenizer_class_from_name('GPT2Tokenizer')
+from transformers.models.gpt2.tokenization_gpt2 import GPT2Tokenizer
+assert resolved is GPT2Tokenizer
+assert root.GPT2Tokenizer is GPT2Tokenizer
+assert root._deferred_import_structure is initial_factory
+assert sys.modules['transformers.models']._deferred_import_structure is not None
+assert create_import_structure_from_path.cache_info().misses < 100
+assert 'torch' not in sys.modules
+# The full catalog must preserve backend declarations and all GPT2 exports.
+from transformers.utils.import_utils import _LazyModule
+expected = _LazyModule(root.__name__, root.__file__, initial_factory(), root.__spec__, root._objects)
+assert root.__all__ == expected.__all__
+assert root._class_to_module == expected._class_to_module
+assert root._object_missing_backend == expected._object_missing_backend
+assert root._import_structure == expected._import_structure
+assert 'GPT2Model' in root._class_to_module
+assert 'BertConfig' in root._class_to_module
+assert root.GPT2Tokenizer is resolved
+""",
+        ],
+        check=True,
+    )
