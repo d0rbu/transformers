@@ -48,16 +48,26 @@ def test_unknown_export_expands_once_and_preserves_loaded_attributes():
 
 
 @pytest.mark.parametrize("consumer", [lambda m: m.__all__, dir, pickle.dumps])
-def test_export_introspection_and_pickle_expand(consumer):
+@pytest.mark.parametrize("backend_keys", [False, True])
+def test_export_introspection_and_pickle_expand(consumer, backend_keys):
     calls = []
-    structure = {frozenset(): {"extra": {"Extra"}}}
+    exports = {"extra": {"Extra"}, "other": {"Other", "Another"}}
+    structure = {frozenset(): exports} if backend_keys else exports
+    expected = _LazyModule("example", "/example/__init__.py", structure)
     m = module(lambda: calls.append(1) or structure)
     consumer(m)
     assert calls == [1]
-    assert "Extra" in m.__all__
+    assert m.__all__ == expected.__all__
     restored = pickle.loads(pickle.dumps(m))
+    expected_restored = pickle.loads(pickle.dumps(expected))
     assert restored._class_to_module == m._class_to_module
-    assert restored.__all__ == m.__all__
+    assert restored._class_to_module == expected_restored._class_to_module
+    # Ordinary lazy modules flatten backend-keyed exports when pickled, which
+    # can change __all__ ordering. Match that existing round-trip contract.
+    assert restored.__all__ == expected_restored.__all__
+    assert restored._modules == expected_restored._modules
+    assert restored._import_structure == expected_restored._import_structure
+    assert restored._deferred_import_structure is None
 
 
 def test_failed_discovery_keeps_original_maps():
