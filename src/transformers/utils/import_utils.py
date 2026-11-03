@@ -2768,9 +2768,10 @@ def create_import_structure_from_path(module_path):
             for index, line in enumerate(lines):
                 # This allows exporting items with other decorators. We'll take a look
                 # at the line that follows at the same indentation level.
-                if (
-                    (line and line[0] in " \t@)") if plain_content else line.startswith((" ", "\t", "@", ")"))
-                ) and not line.startswith("@requires"):
+                if plain_content:
+                    if line and (line[0] in " \t)" or (line[0] == "@" and not line.startswith("@requires"))):
+                        continue
+                elif line.startswith((" ", "\t", "@", ")")) and not line.startswith("@requires"):
                     continue
 
                 # Skipping line enables putting whatever we want between the
