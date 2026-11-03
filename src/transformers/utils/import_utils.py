@@ -43,7 +43,47 @@ from . import logging
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 
-PACKAGE_DISTRIBUTION_MAPPING = importlib.metadata.packages_distributions()
+_PACKAGE_DISTRIBUTION_LOCK = RLock()
+
+
+def _package_distribution_mapping() -> dict[str, list[str]]:
+    with _PACKAGE_DISTRIBUTION_LOCK:
+        mapping = globals().get("PACKAGE_DISTRIBUTION_MAPPING")
+        if mapping is None:
+            mapping = importlib.metadata.packages_distributions()
+            globals()["PACKAGE_DISTRIBUTION_MAPPING"] = mapping
+        return mapping
+
+
+def __dir__() -> list[str]:
+    return sorted({*globals(), "PACKAGE_DISTRIBUTION_MAPPING"})
+
+
+def __getattr__(name: str) -> dict[str, list[str]] | list[str]:
+    if name == "PACKAGE_DISTRIBUTION_MAPPING":
+        return _package_distribution_mapping()
+    if name == "__all__":
+        return [key for key in __dir__() if not key.startswith("_")]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def _package_distributions_for(pkg_name: str) -> list[str]:
+    # Respect an explicitly supplied or already materialized complete mapping.
+    mapping = globals().get("PACKAGE_DISTRIBUTION_MAPPING")
+    if mapping is not None:
+        return mapping[pkg_name]
+    normalized_name = pkg_name.replace("_", "-")
+    try:
+        distribution = importlib.metadata.distribution(normalized_name)
+    except importlib.metadata.PackageNotFoundError:
+        return _package_distribution_mapping()[pkg_name]
+    distribution_name = distribution.metadata["Name"]
+    # packages_distributions includes declared top-level names verbatim. A
+    # matching distribution is already the preferred name below; other cases
+    # retain the complete discovery path, including inferred/editable packages.
+    if distribution_name == normalized_name and pkg_name in (distribution.read_text("top_level.txt") or "").split():
+        return [distribution_name]
+    return _package_distribution_mapping()[pkg_name]
 
 
 def _is_package_available(pkg_name: str, return_version: bool = False) -> tuple[bool, str]:
@@ -55,7 +95,7 @@ def _is_package_available(pkg_name: str, return_version: bool = False) -> tuple[
         try:
             # importlib.metadata works with the distribution package, which may be different from the import
             # name (e.g. `PIL` is the import name, but `pillow` is the distribution name)
-            distributions = PACKAGE_DISTRIBUTION_MAPPING[pkg_name]
+            distributions = _package_distributions_for(pkg_name)
             # Per PEP 503, underscores and hyphens are equivalent in package names.
             # Prefer the distribution that matches the (normalized) package name.
             normalized_pkg_name = pkg_name.replace("_", "-")
@@ -921,7 +961,7 @@ def is_flash_attn_2_available() -> bool:
     is_available, flash_attn_version = _is_package_available("flash_attn", return_version=True)
     # FA4 is also distributed under "flash_attn", hence we need to check the naming here
     is_available = is_available and "flash-attn" in [
-        pkg.replace("_", "-") for pkg in PACKAGE_DISTRIBUTION_MAPPING["flash_attn"]
+        pkg.replace("_", "-") for pkg in _package_distribution_mapping()["flash_attn"]
     ]
 
     if not is_available or not (is_torch_cuda_available() or is_torch_mlu_available()):
@@ -940,7 +980,7 @@ def is_flash_attn_3_available() -> bool:
     is_available = _is_package_available("flash_attn_interface")[0]
     # Resolving and ensuring the proper name of FA3 being associated
     is_available = is_available and "flash-attn-3" in [
-        pkg.replace("_", "-") for pkg in PACKAGE_DISTRIBUTION_MAPPING["flash_attn_interface"]
+        pkg.replace("_", "-") for pkg in _package_distribution_mapping()["flash_attn_interface"]
     ]
     return is_available and is_torch_cuda_available()
 
@@ -952,7 +992,7 @@ def is_flash_attn_4_available() -> bool:
     # NOTE: FA2 seems to distribute the `cute` subdirectory even if only FA2 has been installed
     #       -> check for the proper (normalized) distribution name
     is_available = is_available and "flash-attn-4" in [
-        pkg.replace("_", "-") for pkg in PACKAGE_DISTRIBUTION_MAPPING["flash_attn"]
+        pkg.replace("_", "-") for pkg in _package_distribution_mapping()["flash_attn"]
     ]
 
     return is_available and is_torch_cuda_available()
@@ -963,7 +1003,7 @@ def is_flash_attn_greater_or_equal(library_version: str) -> bool:
     is_available, flash_attn_version = _is_package_available("flash_attn", return_version=True)
     # FA4 is also distributed under "flash_attn", hence we need to check the naming here
     is_available = is_available and "flash-attn" in [
-        pkg.replace("_", "-") for pkg in PACKAGE_DISTRIBUTION_MAPPING["flash_attn"]
+        pkg.replace("_", "-") for pkg in _package_distribution_mapping()["flash_attn"]
     ]
 
     if not is_available:
