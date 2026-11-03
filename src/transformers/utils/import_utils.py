@@ -2958,14 +2958,14 @@ def spread_import_structure(nested_import_structure):
         return frozenset_first_import_structure
 
     def flatten_dict(_dict, previous_key=None):
-        items = []
+        items = {}
         for _key, _value in _dict.items():
             _key = f"{previous_key}.{_key}" if previous_key is not None else _key
             if isinstance(_value, dict):
-                items.extend(flatten_dict(_value, _key).items())
+                items.update(flatten_dict(_value, _key))
             else:
-                items.append((_key, _value))
-        return dict(items)
+                items[_key] = _value
+        return items
 
     # The tuples contain the necessary backends. We want these first, so we propagate them up the
     # import structure.

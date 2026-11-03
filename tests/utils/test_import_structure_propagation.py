@@ -18,6 +18,19 @@ from transformers.utils.import_utils import spread_import_structure
 
 
 class ImportStructurePropagationTest(unittest.TestCase):
+    def test_flattened_collision_keeps_first_position_and_last_leaf(self):
+        backend = frozenset()
+        first, last, other = {"First"}, {"Last"}, {"Other"}
+        tree = {backend: {"a.b": first, "a": {"b": last}, "other": other}}
+        result = spread_import_structure(tree)
+        self.assertEqual(list(result), [backend])
+        self.assertEqual(list(result[backend]), ["a.b", "other"])
+        self.assertIs(result[backend]["a.b"], last)
+        self.assertIs(result[backend]["other"], other)
+        self.assertEqual(list(tree[backend]), ["a.b", "a", "other"])
+        self.assertIs(tree[backend]["a.b"], first)
+        self.assertIs(tree[backend]["a"]["b"], last)
+
     def test_group_and_module_order_preserves_mutable_leaf_aliases(self):
         plain, torch = frozenset(), frozenset({"torch"})
         first, second = {"First"}, {"Second"}
