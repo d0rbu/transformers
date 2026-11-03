@@ -31,10 +31,39 @@ from .utils import (
     is_torch_xpu_available,
     logging,
 )
-from .utils.import_utils import PACKAGE_DISTRIBUTION_MAPPING, is_tracing
+from .utils.import_utils import is_tracing
 
 
 logger = logging.get_logger(__name__)
+
+PACKAGE_DISTRIBUTION_MAPPING: dict[str, list[str]]
+
+
+def __getattr__(name):
+    if name == "PACKAGE_DISTRIBUTION_MAPPING":
+        from .utils.import_utils import PACKAGE_DISTRIBUTION_MAPPING
+
+        globals()[name] = PACKAGE_DISTRIBUTION_MAPPING
+        return PACKAGE_DISTRIBUTION_MAPPING
+    if name == "__all__":
+        return [key for key in __dir__() if not key.startswith("_")]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__():
+    return sorted(set(globals()) | {"PACKAGE_DISTRIBUTION_MAPPING"})
+
+
+def _flash_attn_package_available(package: str, distribution: str) -> bool:
+    if importlib.util.find_spec(package) is None:
+        return False
+    # Preserve the public mapping alias, including caller mutations/rebindings,
+    # without resolving import_utils' lazy package map during CPU model imports.
+    try:
+        mapping = PACKAGE_DISTRIBUTION_MAPPING
+    except NameError:
+        mapping = __getattr__("PACKAGE_DISTRIBUTION_MAPPING")
+    return distribution in [pkg.replace("_", "-") for pkg in mapping[package]]
 
 
 # TODO Deprecate when all models have the attention interface
@@ -74,8 +103,7 @@ FLASH_ATTENTION_COMPATIBILITY_MATRIX = {
     2: {
         "flash_attn_version": 2,
         "general_availability_check": is_flash_attn_2_available,
-        "pkg_availability_check": lambda *args, **kwargs: importlib.util.find_spec("flash_attn") is not None
-        and "flash-attn" in [pkg.replace("_", "-") for pkg in PACKAGE_DISTRIBUTION_MAPPING["flash_attn"]],
+        "pkg_availability_check": lambda *args, **kwargs: _flash_attn_package_available("flash_attn", "flash-attn"),
         "supported_devices": (
             (is_torch_cuda_available, "cuda"),
             (is_torch_mlu_available, "mlu"),
@@ -93,16 +121,16 @@ FLASH_ATTENTION_COMPATIBILITY_MATRIX = {
     3: {
         "flash_attn_version": 3,
         "general_availability_check": is_flash_attn_3_available,
-        "pkg_availability_check": lambda *args, **kwargs: importlib.util.find_spec("flash_attn_interface") is not None
-        and "flash-attn-3" in [pkg.replace("_", "-") for pkg in PACKAGE_DISTRIBUTION_MAPPING["flash_attn_interface"]],
+        "pkg_availability_check": lambda *args, **kwargs: _flash_attn_package_available(
+            "flash_attn_interface", "flash-attn-3"
+        ),
         "supported_devices": ((is_torch_cuda_available, "cuda"),),
         "cuda_min_major_version": 8,  # Ampere
     },
     4: {
         "flash_attn_version": 4,
         "general_availability_check": is_flash_attn_4_available,
-        "pkg_availability_check": lambda *args, **kwargs: importlib.util.find_spec("flash_attn") is not None
-        and "flash-attn-4" in [pkg.replace("_", "-") for pkg in PACKAGE_DISTRIBUTION_MAPPING["flash_attn"]],
+        "pkg_availability_check": lambda *args, **kwargs: _flash_attn_package_available("flash_attn", "flash-attn-4"),
         "supported_devices": ((is_torch_cuda_available, "cuda"),),
         "cuda_min_major_version": 9,  # Hopper
     },

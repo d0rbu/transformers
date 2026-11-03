@@ -27,6 +27,145 @@ from transformers.utils import import_utils
 from transformers.utils.import_utils import _get_package_distribution_mapping
 
 
+class FlashAttentionPackageMappingTest(unittest.TestCase):
+    def setUp(self):
+        from transformers import modeling_flash_attention_utils
+
+        self.flash = modeling_flash_attention_utils
+        self.saved_flash_mapping = vars(self.flash).pop("PACKAGE_DISTRIBUTION_MAPPING", None)
+        self.saved_import_mapping = vars(import_utils).pop("PACKAGE_DISTRIBUTION_MAPPING", None)
+
+    def tearDown(self):
+        for module, mapping in (
+            (self.flash, self.saved_flash_mapping),
+            (import_utils, self.saved_import_mapping),
+        ):
+            vars(module).pop("PACKAGE_DISTRIBUTION_MAPPING", None)
+            if mapping is not None:
+                module.PACKAGE_DISTRIBUTION_MAPPING = mapping
+
+    def test_fresh_cpu_llama_import_does_not_build_package_map(self):
+        script = textwrap.dedent("""
+            from unittest.mock import patch
+            from transformers.utils import import_utils
+            assert "PACKAGE_DISTRIBUTION_MAPPING" not in vars(import_utils)
+            with patch.object(import_utils, "_get_package_distribution_mapping",
+                              side_effect=AssertionError("unrequested package scan")):
+                from transformers.models.llama.modeling_llama import LlamaForSequenceClassification
+                from transformers import modeling_flash_attention_utils as flash
+                assert "PACKAGE_DISTRIBUTION_MAPPING" not in vars(import_utils)
+                assert "PACKAGE_DISTRIBUTION_MAPPING" not in vars(flash)
+                assert "PACKAGE_DISTRIBUTION_MAPPING" in dir(flash)
+                with patch("importlib.util.find_spec", return_value=None):
+                    for version in (2, 3, 4):
+                        assert flash.FLASH_ATTENTION_COMPATIBILITY_MATRIX[version]["pkg_availability_check"]() is False
+        """)
+        subprocess.run([sys.executable, "-c", script], check=True)
+
+    def test_absent_flash_packages_leave_mapping_deferred(self):
+        with (
+            patch("importlib.util.find_spec", return_value=None) as find,
+            patch.object(import_utils, "_get_package_distribution_mapping", side_effect=AssertionError("scan")),
+        ):
+            for version in (2, 3, 4):
+                self.assertIs(
+                    self.flash.FLASH_ATTENTION_COMPATIBILITY_MATRIX[version]["pkg_availability_check"](), False
+                )
+            self.assertEqual(
+                [call.args[0] for call in find.call_args_list], ["flash_attn", "flash_attn_interface", "flash_attn"]
+            )
+        self.assertNotIn("PACKAGE_DISTRIBUTION_MAPPING", vars(self.flash))
+
+    def test_all_package_owners_keep_original_normalization_and_errors(self):
+        mapping = {}
+        with (
+            patch("importlib.util.find_spec", return_value=object()),
+            patch.object(import_utils, "_get_package_distribution_mapping", return_value=mapping) as build,
+        ):
+            for version, package, owner in (
+                (2, "flash_attn", "flash-attn"),
+                (3, "flash_attn_interface", "flash-attn-3"),
+                (4, "flash_attn", "flash-attn-4"),
+            ):
+                check = self.flash.FLASH_ATTENTION_COMPATIBILITY_MATRIX[version]["pkg_availability_check"]
+                for owners in ([], [owner], [owner.replace("-", "_")], ["other", owner, owner], [owner.upper()]):
+                    with self.subTest(version=version, owners=owners):
+                        mapping[package] = owners
+                        self.assertIs(
+                            check("ignored", ignored=True), owner in [value.replace("_", "-") for value in owners]
+                        )
+                del mapping[package]
+                with self.assertRaisesRegex(KeyError, package):
+                    check()
+                mapping[package] = [owner, None]
+                with self.assertRaisesRegex(AttributeError, "replace"):
+                    check()
+            build.assert_called_once_with()
+
+    def test_public_alias_star_import_and_mutations_keep_identity(self):
+        mapping = {"flash_attn": ["flash_attn"]}
+        with patch.object(import_utils, "_get_package_distribution_mapping", return_value=mapping) as build:
+            self.assertIs(self.flash.PACKAGE_DISTRIBUTION_MAPPING, mapping)
+            self.assertIs(vars(self.flash)["PACKAGE_DISTRIBUTION_MAPPING"], mapping)
+            namespace = {}
+            exec("from transformers.modeling_flash_attention_utils import *", namespace)
+            self.assertIs(namespace["PACKAGE_DISTRIBUTION_MAPPING"], mapping)
+            self.assertNotIn("_sys", namespace)
+            with patch("importlib.util.find_spec", return_value=object()):
+                check = self.flash.FLASH_ATTENTION_COMPATIBILITY_MATRIX[2]["pkg_availability_check"]
+                self.assertIs(check(), True)
+                mapping["flash_attn"].clear()
+                self.assertIs(check(), False)
+                self.flash.PACKAGE_DISTRIBUTION_MAPPING = {"flash_attn": ["flash-attn"]}
+                self.assertIs(check(), True)
+                # Once bound, the original module-local alias remains independent
+                # of later replacement of import_utils' module attribute.
+                import_utils.PACKAGE_DISTRIBUTION_MAPPING = {}
+                self.assertIs(check(), True)
+            build.assert_called_once_with()
+
+    def test_explicit_map_failure_and_unknown_attribute_are_not_hidden(self):
+        with patch.object(
+            import_utils, "_get_package_distribution_mapping", side_effect=RuntimeError("metadata error")
+        ):
+            with self.assertRaisesRegex(RuntimeError, "metadata error"):
+                self.flash.PACKAGE_DISTRIBUTION_MAPPING
+        self.assertNotIn("PACKAGE_DISTRIBUTION_MAPPING", vars(self.flash))
+        with self.assertRaisesRegex(AttributeError, "missing_flash_attribute"):
+            self.flash.missing_flash_attribute
+        mapping = {"flash_attn": ["flash-attn"]}
+        with patch.object(import_utils, "_get_package_distribution_mapping", return_value=mapping):
+            self.assertIs(self.flash.PACKAGE_DISTRIBUTION_MAPPING, mapping)
+
+    def test_concurrent_explicit_exports_share_existing_locked_builder(self):
+        mapping = {"flash_attn": ["flash-attn"]}
+
+        def build():
+            time.sleep(0.01)
+            return mapping
+
+        with patch.object(import_utils, "_get_package_distribution_mapping", side_effect=build) as factory:
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                results = list(pool.map(lambda _: self.flash.PACKAGE_DISTRIBUTION_MAPPING, range(8)))
+        self.assertTrue(all(result is mapping for result in results))
+        factory.assert_called_once_with()
+
+    def test_retained_availability_callback_survives_module_cache_removal(self):
+        mapping = {"flash_attn": ["flash-attn"]}
+        self.flash.PACKAGE_DISTRIBUTION_MAPPING = mapping
+        check = self.flash.FLASH_ATTENTION_COMPATIBILITY_MATRIX[2]["pkg_availability_check"]
+        # clear_import_cache removes sys.modules entries while external callers
+        # can retain references to the old module and its compatibility matrix.
+        module = sys.modules.pop(self.flash.__name__)
+        try:
+            with patch("importlib.util.find_spec", return_value=object()):
+                self.assertIs(check(), True)
+                mapping["flash_attn"].clear()
+                self.assertIs(check(), False)
+        finally:
+            sys.modules[self.flash.__name__] = module
+
+
 class DistributionFixture:
     def __init__(self, name, declared=None, files=None):
         self.name = name
