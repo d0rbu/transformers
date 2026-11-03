@@ -2128,7 +2128,7 @@ class _LazyModule(ModuleType):
                     except (ModuleNotFoundError, RuntimeError):
                         missing_backends.append(backend)
 
-                self._modules = self._modules.union(module_keys)
+                self._modules.update(module_keys)
 
                 for key, values in module.items():
                     if missing_backends:
