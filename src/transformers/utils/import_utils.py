@@ -2852,7 +2852,7 @@ def create_import_structure_from_path(module_path):
         # Objects that have a `@require` assigned to them will get exported
         # with the backends specified in the decorator as well as the file backends.
         exported_objects = set()
-        if "@requires" in file_content:
+        if file_content.rfind("@requires") != -1 if type(file_content) is str else "@requires" in file_content:
             # Preserve overridden split/startswith dispatch on supplied string subclasses.
             plain_content = type(file_content) is str
             lines = file_content.split("\n")
