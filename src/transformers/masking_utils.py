@@ -36,10 +36,6 @@ _is_torch_greater_or_equal_than_2_5 = is_torch_greater_or_equal("2.5", accept_de
 _is_torch_greater_or_equal_than_2_6 = is_torch_greater_or_equal("2.6", accept_dev=True)
 _is_torch_xpu_available = is_torch_xpu_available()
 
-if _is_torch_greater_or_equal_than_2_6:
-    from torch._dynamo._trace_wrapped_higher_order_op import TransformGetItemToIndex
-
-
 logger = logging.get_logger(__name__)
 
 
@@ -521,6 +517,8 @@ def sdpa_mask(
 
     # Option 2: Vmap mask creation (torch>=2.6 and custom patterns)
     elif _is_torch_greater_or_equal_than_2_6:
+        from torch._dynamo._trace_wrapped_higher_order_op import TransformGetItemToIndex
+
         # This creates the 4D mask easily. Note that we need this context manager as vmap cannot handle slicing a tensor from
         # scalar tensor (it internally calls `.item()` which vmap does not allow, but this context works around it
         # We don't need to add an offset to the mask_function either, as we vmap directly the correct indices for k and kv indices

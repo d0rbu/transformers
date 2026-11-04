@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import subprocess
+import sys
+import textwrap
 import unittest
 
 from transformers.testing_utils import (
@@ -33,6 +36,7 @@ if is_torch_available():
         create_causal_mask,
         create_chunked_causal_mask,
         find_packed_sequence_indices,
+        sdpa_mask,
     )
 
 
@@ -71,6 +75,63 @@ class MaskTest(unittest.TestCase):
 
     def tearDown(self):
         cleanup(torch_device, gc_collect=True)
+
+    def test_plain_mask_import_does_not_initialize_dynamo(self):
+        code = textwrap.dedent("""
+            import importlib.abc
+            import sys
+
+            class RejectDynamo(importlib.abc.MetaPathFinder):
+                def find_spec(self, fullname, path=None, target=None):
+                    if fullname == "torch._dynamo":
+                        raise AssertionError("ordinary mask import initialized Dynamo")
+                    return None
+
+            sys.meta_path.insert(0, RejectDynamo())
+            from transformers.masking_utils import sdpa_mask
+            import torch
+
+            actual = sdpa_mask(batch_size=1, q_length=4, kv_length=4,
+                               device=torch.device("cpu"), allow_is_causal_skip=False)
+            assert torch.equal(actual, torch.ones(1, 1, 4, 4, dtype=torch.bool).tril())
+            assert "torch._dynamo" not in sys.modules
+        """)
+        subprocess.run(
+            [sys.executable, "-I", "-B", "-c", code], capture_output=True, text=True, check=True, timeout=30
+        )
+
+    def test_sdpa_vmap_preserves_scalar_tensor_indexing(self):
+        values = torch.arange(32).reshape(2, 4, 4) % 3 == 0
+
+        def custom_mask(batch, head, query, key):
+            return values[batch, query, key]
+
+        actual = sdpa_mask(
+            batch_size=2,
+            q_length=4,
+            kv_length=4,
+            device=torch.device("cpu"),
+            mask_function=custom_mask,
+            use_vmap=True,
+            allow_is_causal_skip=False,
+        )
+        self.assertTrue(torch.equal(actual, values[:, None]))
+
+    def test_sdpa_vmap_restores_context_after_custom_mask_failure(self):
+        def failed_mask(batch, head, query, key):
+            raise RuntimeError("custom mask failed")
+
+        with self.assertRaisesRegex(RuntimeError, "custom mask failed"):
+            sdpa_mask(
+                batch_size=1,
+                q_length=2,
+                kv_length=2,
+                device=torch.device("cpu"),
+                mask_function=failed_mask,
+                use_vmap=True,
+                allow_is_causal_skip=False,
+            )
+        self.assertEqual(torch.arange(3)[torch.tensor(1)].item(), 1)
 
     def test_packed_sequence_mask_sdpa(self):
         config = LlamaConfig()
