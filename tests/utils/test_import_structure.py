@@ -47,16 +47,21 @@ class TestImportStructures(unittest.TestCase):
     models_import_structure = spread_import_structure(define_import_structure(models_path))
 
     def test_models_import_reuses_discovery(self):
-        """The nested lazy module consumes the already discovered model tree."""
+        """Import stays deferred and export materialization reuses the discovered model tree."""
         script = textwrap.dedent(
             """
             import importlib
+            from pathlib import Path
 
             import transformers
             from transformers.utils.import_utils import create_import_structure_from_path
 
+            models_file = Path(transformers.__file__).parent / "models" / "__init__.py"
+            create_import_structure_from_path(str(models_file))
             before = create_import_structure_from_path.cache_info()
             models = importlib.import_module("transformers.models")
+            assert create_import_structure_from_path.cache_info() == before
+            assert "GPT2Config" in models.__all__
             after = create_import_structure_from_path.cache_info()
             assert after.misses == before.misses, (before, after)
             assert after.hits > before.hits, (before, after)
