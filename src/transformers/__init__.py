@@ -30,7 +30,6 @@ from typing import TYPE_CHECKING
 from . import dependency_versions_check
 from .utils import (
     OptionalDependencyNotAvailable,
-    _LazyModule,
     is_essentia_available,
     is_g2p_en_available,
     is_librosa_available,
@@ -54,7 +53,7 @@ from .utils import is_torchaudio_available as is_torchaudio_available
 from .utils import is_torchvision_available as is_torchvision_available
 from .utils import is_vision_available as is_vision_available
 from .utils import logging as logging
-from .utils.import_utils import define_import_structure
+from .utils.import_utils import _DeferredLazyModule, define_import_structure
 
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -790,15 +789,25 @@ if TYPE_CHECKING:
 else:
     _import_structure = {k: set(v) for k, v in _import_structure.items()}
 
-    import_structure = define_import_structure(str(Path(__file__).parent / "models" / "__init__.py"), prefix="models")
-    import_structure[frozenset({})].update(_import_structure)
+    def _model_import_structure():
+        import_structure = define_import_structure(Path(__file__).parent / "models", prefix="models")
+        import_structure[frozenset({})].update(_import_structure)
+        return import_structure
 
-    sys.modules[__name__] = _LazyModule(
+    # AutoTokenizer resolves shared tokenizer aliases through the root namespace.
+    # Make GPT2's exports available without discovering every unrelated model.
+    _initial_import_structure = define_import_structure(
+        Path(__file__).parent / "models" / "gpt2", prefix="models.gpt2"
+    )
+    _initial_import_structure.setdefault(frozenset(), {}).update(_import_structure)
+
+    sys.modules[__name__] = _DeferredLazyModule(
         __name__,
         globals()["__file__"],
-        import_structure,
+        _initial_import_structure,
         module_spec=__spec__,
         extra_objects={"__version__": __version__},
+        deferred_import_structure=_model_import_structure,
     )
 
     def _create_module_alias(alias: str, target: str) -> None:

@@ -22,6 +22,7 @@ import inspect
 import json
 import os
 import re
+import sys
 import warnings
 from collections import OrderedDict as OrderedDict
 from collections import UserDict
@@ -44,6 +45,25 @@ from .import_utils import is_mlx_available, is_torch_available, is_torch_fx_prox
 
 
 _is_torch_available = is_torch_available()
+
+# Exact ordinary values cannot expose a lazy tensor class. Subclasses retain
+# the import-and-isinstance path, including custom __class__ properties.
+_PLAIN_VALUE_TYPES = (
+    type(None),
+    bool,
+    int,
+    float,
+    complex,
+    str,
+    bytes,
+    bytearray,
+    list,
+    tuple,
+    dict,
+    set,
+    frozenset,
+    np.ndarray,
+)
 
 
 _MODEL_OUTPUT_NAMES = ("ModelOutput", "TransformersKwargs", "maybe_autocast")
@@ -156,7 +176,7 @@ def is_tensor(x) -> bool:
             return True
 
     # Tracers
-    if is_torch_fx_proxy(x):
+    if "torch" in sys.modules and is_torch_fx_proxy(x):
         return True
 
     return False
@@ -173,10 +193,11 @@ def is_torch_tensor(x) -> bool:
     """
     Tests if `x` is a torch tensor or not. Safe to call even if torch is not installed.
     """
-    if not _is_torch_available:
+    torch = sys.modules.get("torch")
+    if not _is_torch_available or (torch is None and any(type(x) is value_type for value_type in _PLAIN_VALUE_TYPES)):
         return False
-    import torch
-
+    if torch is None:
+        import torch
     return isinstance(x, torch.Tensor)
 
 
@@ -184,10 +205,11 @@ def is_torch_device(x) -> bool:
     """
     Tests if `x` is a torch device or not. Safe to call even if torch is not installed.
     """
-    if not _is_torch_available:
+    torch = sys.modules.get("torch")
+    if not _is_torch_available or (torch is None and any(type(x) is value_type for value_type in _PLAIN_VALUE_TYPES)):
         return False
-    import torch
-
+    if torch is None:
+        import torch
     return isinstance(x, torch.device)
 
 

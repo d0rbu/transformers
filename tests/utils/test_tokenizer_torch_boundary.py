@@ -21,6 +21,68 @@ from pathlib import Path
 
 
 class TokenizerTorchBoundaryTest(unittest.TestCase):
+    def test_lazy_tensor_and_device_classes_keep_isinstance_behavior(self) -> None:
+        for name in ("Tensor", "device"):
+            self.run_fresh(
+                """
+                from transformers.utils.generic import is_torch_device, is_torch_tensor
+                assert "torch" not in sys.modules
+                class LazyClass(list):
+                    @property
+                    def __class__(self):
+                        import torch
+                        return getattr(torch, CLASS_NAME)
+                predicate = is_torch_tensor if CLASS_NAME == "Tensor" else is_torch_device
+                assert predicate(LazyClass())
+                assert "torch" in sys.modules
+            """.replace("CLASS_NAME", repr(name))
+            )
+
+    def test_metaclass_equality_cannot_impersonate_plain_types(self) -> None:
+        for name in ("Tensor", "device"):
+            for raises in (False, True):
+                self.run_fresh(
+                    """
+                    from transformers.utils.generic import is_torch_device, is_torch_tensor
+                    assert "torch" not in sys.modules
+                    class EqualMeta(type):
+                        def __eq__(cls, other):
+                            if RAISES:
+                                raise AssertionError("Metaclass equality must not run")
+                            return True
+                    class LazyClass(metaclass=EqualMeta):
+                        @property
+                        def __class__(self):
+                            import torch
+                            return getattr(torch, CLASS_NAME)
+                    predicate = is_torch_tensor if CLASS_NAME == "Tensor" else is_torch_device
+                    assert predicate(LazyClass())
+                    assert "torch" in sys.modules
+                """.replace("CLASS_NAME", repr(name)).replace("RAISES", repr(raises))
+                )
+
+    def test_plain_tensor_predicates_do_not_initialize_torch(self) -> None:
+        self.run_fresh("""
+            import numpy as np
+            from transformers.utils.generic import is_tensor, is_torch_device, is_torch_tensor
+
+            assert "torch" not in sys.modules
+            for value in (None, 1, "cpu", [1, 2], {"input_ids": [1]}, np.array([1, 2])):
+                assert not is_torch_tensor(value)
+                assert not is_torch_device(value)
+            assert not is_tensor([1, 2])
+            assert is_tensor(np.array([1, 2]))
+            assert "torch" not in sys.modules
+
+            import torch
+            class TensorSubclass(torch.Tensor):
+                pass
+            assert is_torch_tensor(torch.tensor([1]))
+            assert is_torch_tensor(torch.tensor([1]).as_subclass(TensorSubclass))
+            assert is_torch_device(torch.device("cpu"))
+            assert is_tensor(torch.tensor([1]))
+        """)
+
     def run_fresh(self, source: str) -> None:
         root = Path(__file__).resolve().parents[2] / "src"
         command = "import sys\nsys.path.insert(0, " + repr(str(root)) + ")\n" + textwrap.dedent(source)
