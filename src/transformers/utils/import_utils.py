@@ -2938,7 +2938,7 @@ def create_import_structure_from_path(module_path):
 
         # All objects that are in __all__ should be exported by default.
         # These objects are exported with the file backends.
-        if "__all__" in file_content:
+        if type(file_content) is str or "__all__" in file_content:
             all_objects = set(fetch__all__(file_content)) - exported_objects
             if all_objects:
                 backends = frozenset(base_requirements)
