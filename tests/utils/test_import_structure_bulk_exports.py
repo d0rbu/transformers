@@ -50,5 +50,42 @@ class BulkExportsTest(unittest.TestCase):
         )
 
 
+class DiscoveryCacheReuseTest(unittest.TestCase):
+    def tearDown(self):
+        create_import_structure_from_path.cache_clear()
+
+    def test_parent_discovery_retains_a_broad_package_tree(self):
+        # Nested lazy modules should reuse the package tree discovered by their parent.
+        with tempfile.TemporaryDirectory() as root:
+            for index in range(140):
+                package = Path(root) / f"package_{index}"
+                package.mkdir()
+                (package / "configuration_example.py").write_text('__all__ = ["Example"]\n', encoding="utf-8")
+            create_import_structure_from_path.cache_clear()
+            parent = create_import_structure_from_path(root)
+            before = create_import_structure_from_path.cache_info()
+            for name, structure in parent.items():
+                self.assertIs(create_import_structure_from_path(str(Path(root) / name)), structure)
+                self.assertEqual(structure, {frozenset(): {"configuration_example": {"Example"}}})
+            after = create_import_structure_from_path.cache_info()
+            self.assertEqual(after.misses, before.misses)
+            self.assertEqual(after.hits - before.hits, 140)
+            self.assertLessEqual(after.currsize, after.maxsize)
+
+    def test_explicit_clear_rediscovers_changed_exports(self):
+        with tempfile.TemporaryDirectory() as root:
+            source = Path(root) / "configuration_example.py"
+            source.write_text('__all__ = ["Before"]\n', encoding="utf-8")
+            create_import_structure_from_path.cache_clear()
+            before = create_import_structure_from_path(root)
+            source.write_text('__all__ = ["After"]\n', encoding="utf-8")
+            self.assertIs(create_import_structure_from_path(root), before)
+            create_import_structure_from_path.cache_clear()
+            self.assertEqual(
+                create_import_structure_from_path(root),
+                {frozenset(): {"configuration_example": {"After"}}},
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

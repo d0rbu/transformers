@@ -2659,7 +2659,7 @@ def fetch__all__(file_content) -> list[str]:
         return _all
 
 
-@lru_cache
+@lru_cache(maxsize=512)
 def create_import_structure_from_path(module_path):
     """
     This method takes the path to a file/a folder and returns the import structure.
