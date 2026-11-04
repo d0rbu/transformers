@@ -2852,10 +2852,23 @@ def create_import_structure_from_path(module_path):
         # Objects that have a `@require` assigned to them will get exported
         # with the backends specified in the decorator as well as the file backends.
         exported_objects = set()
-        if file_content.rfind("@requires") != -1 if type(file_content) is str else "@requires" in file_content:
+        plain_content = type(file_content) is str
+        last_requires = file_content.rfind("@requires") if plain_content else -1
+        if last_requires != -1 if plain_content else "@requires" in file_content:
             # Preserve overridden split/startswith dispatch on supplied string subclasses.
-            plain_content = type(file_content) is str
-            lines = file_content.split("\n")
+            content = file_content
+            if plain_content:
+                # The last decorator is consumed by the next top-level class/def header.
+                # Keep that whole line; __all__ below still reads the complete file.
+                class_start = file_content.find("\nclass", last_requires)
+                def_start = file_content.find("\ndef", last_requires)
+                object_start = class_start
+                if class_start == -1 or (def_start != -1 and def_start < class_start):
+                    object_start = def_start
+                object_end = file_content.find("\n", object_start + 1) if object_start != -1 else -1
+                if object_end != -1:
+                    content = file_content[:object_end]
+            lines = content.split("\n")
             for index, line in enumerate(lines):
                 # This allows exporting items with other decorators. We'll take a look
                 # at the line that follows at the same indentation level.
