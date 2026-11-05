@@ -41,7 +41,8 @@ from torch import Tensor, nn
 from torch.distributions import constraints
 from torch.utils.checkpoint import checkpoint
 
-from . import initialization as init
+import transformers.initialization as init
+
 from .configuration_utils import PreTrainedConfig
 from .conversion_mapping import get_model_conversion_mapping
 from .core_model_loading import (
