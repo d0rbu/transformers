@@ -24,12 +24,15 @@ import copy
 import json
 import os
 import re
+import sys
 import warnings
 from collections import OrderedDict, UserDict
 from collections.abc import Callable, Collection, Mapping, Sequence, Sized
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple, Union
+from types import ModuleType
+from typing import IO, TYPE_CHECKING, Any, NamedTuple, Union
 
 import numpy as np
 from huggingface_hub import create_repo, is_offline_mode, list_repo_files
@@ -125,6 +128,53 @@ else:
 
 
 logger = logging.get_logger(__name__)
+
+
+@lru_cache(maxsize=1)
+def _tokenizer_added_token_fields(core: ModuleType) -> Any:
+    """Compile only the current native token table when this optional parser is already loaded."""
+    return core.SchemaValidator(
+        {
+            "type": "typed-dict",
+            "fields": {
+                "added_tokens": {
+                    "type": "typed-dict-field",
+                    "schema": {
+                        "type": "list",
+                        "items_schema": {
+                            "type": "dict",
+                            "keys_schema": {"type": "str", "strict": True},
+                            "values_schema": {
+                                "type": "union",
+                                "choices": [
+                                    {"type": "str", "strict": True},
+                                    {"type": "bool", "strict": True},
+                                    {"type": "int", "strict": True},
+                                ],
+                            },
+                        },
+                    },
+                }
+            },
+            "extra_behavior": "ignore",
+            "config": {"cache_strings": False},
+        }
+    )
+
+
+def _read_tokenizer_added_tokens(handle: IO[str]) -> Any:
+    """Read fresh descriptors without materializing the unused native vocabulary in Python."""
+    payload = handle.read()
+    core = sys.modules.get("pydantic_core")
+    if core is not None and hasattr(core, "SchemaValidator") and hasattr(core, "ValidationError"):
+        try:
+            return _tokenizer_added_token_fields(core).validate_json(payload)["added_tokens"]
+        except core.ValidationError:
+            pass
+    # Unusual tables (including floats), missing fields and malformed JSON keep
+    # stdlib values and errors. Leave the handler before raising a legacy error.
+    return json.loads(payload).pop("added_tokens")
+
 
 VERY_LARGE_INTEGER = int(1e30)  # This is used to set the max input length for a model with infinite size input
 LARGE_INTEGER = int(1e20)  # This is used when we need something big but slightly smaller than VERY_LARGE_INTEGER
@@ -1883,8 +1933,7 @@ class PreTrainedTokenizerBase(PushToHubMixin):
             if tokenizer_file is not None:
                 # This is for slow so can be done before
                 with open(tokenizer_file, encoding="utf-8") as tokenizer_file_handle:
-                    tokenizer_file_handle = json.load(tokenizer_file_handle)
-                    added_tokens = tokenizer_file_handle.pop("added_tokens")
+                    added_tokens = _read_tokenizer_added_tokens(tokenizer_file_handle)
                 for serialized_tokens in added_tokens:
                     idx = serialized_tokens.pop("id")
                     added_tokens_decoder[idx] = AddedToken(**serialized_tokens)
