@@ -1824,6 +1824,7 @@ class PreTrainedTokenizerBase(PushToHubMixin):
         #### Handle tokenizer serialization of added and special tokens
         added_tokens_decoder: dict[int, AddedToken] = {}
         added_tokens_map: dict[str, AddedToken] = {}
+        parsed_tokenizer_json = None
         # if we have info on the slow added tokens
         if "added_tokens_decoder" in init_kwargs:
             for idx, token in init_kwargs["added_tokens_decoder"].items():
@@ -1881,13 +1882,12 @@ class PreTrainedTokenizerBase(PushToHubMixin):
             # allows converting a fast -> slow: add the `tokenizer.json`'s `"added_tokens"` to the slow tokenizer
             # if `tokenizer_config.json` is `None`
             if tokenizer_file is not None:
-                # This is for slow so can be done before
-                with open(tokenizer_file, encoding="utf-8") as tokenizer_file_handle:
-                    tokenizer_file_handle = json.load(tokenizer_file_handle)
-                    added_tokens = tokenizer_file_handle.pop("added_tokens")
-                for serialized_tokens in added_tokens:
-                    idx = serialized_tokens.pop("id")
-                    added_tokens_decoder[idx] = AddedToken(**serialized_tokens)
+                with open(tokenizer_file, encoding="utf-8") as tokenizer_handle:
+                    parsed_tokenizer_json = json.load(tokenizer_handle)
+                for serialized_tokens in parsed_tokenizer_json["added_tokens"]:
+                    token_kwargs = serialized_tokens.copy()
+                    idx = token_kwargs.pop("id")
+                    added_tokens_decoder[idx] = AddedToken(**token_kwargs)
                     added_tokens_map[str(added_tokens_decoder[idx])] = added_tokens_decoder[idx]
             # end legacy
 
@@ -1904,7 +1904,27 @@ class PreTrainedTokenizerBase(PushToHubMixin):
         # for `tokenizers` based tokenizer, we actually want to have vocab and merges pre-extracted from whatever inputs
         # for `none` (PythonBackend) based tokenizer, we also want the vocab file / merge files not extracted.
         # for `sentencepiece` based tokenizer, we pass the sentencepiece model file directly.
-        init_kwargs = cls.convert_to_native_format(**init_kwargs)
+        convert = cls.convert_to_native_format
+        if parsed_tokenizer_json is not None and init_kwargs.get("tokenizer_file") == tokenizer_file:
+            from .tokenization_utils_tokenizers import _STANDARD_NATIVE_CONVERTER, TokenizersBackend
+
+            # Custom converters keep their original inputs and own any file reads.
+            if (
+                getattr(convert, "__self__", None) is cls
+                and getattr(convert, "__func__", None) is _STANDARD_NATIVE_CONVERTER
+            ):
+                conversion_kwargs = dict(init_kwargs)
+                trust_conversion = conversion_kwargs.pop("trust_remote_code", False)
+                init_kwargs = TokenizersBackend._convert_to_native_format.__func__(
+                    cls,
+                    conversion_kwargs,
+                    trust_remote_code=trust_conversion,
+                    tokenizer_json=parsed_tokenizer_json,
+                )
+            else:
+                init_kwargs = convert(**init_kwargs)
+        else:
+            init_kwargs = convert(**init_kwargs)
 
         try:
             tokenizer = cls(*init_inputs, **init_kwargs)

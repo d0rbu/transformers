@@ -103,6 +103,10 @@ class TokenizersBackend(PreTrainedTokenizerBase):
         Build a `tokenizers.Tokenizer` backend from the available serialization files (tokenizer.json, sentencepiece
         models, tekken.json, vocab/merges).
         """
+        return TokenizersBackend._convert_to_native_format.__func__(cls, kwargs, trust_remote_code=trust_remote_code)
+
+    @classmethod
+    def _convert_to_native_format(cls, kwargs, *, trust_remote_code=False, tokenizer_json=None):
         # Preserve kwargs for possible downstream use
         local_kwargs = dict(kwargs)
         fast_tokenizer_file = local_kwargs.pop("tokenizer_file", None)
@@ -122,8 +126,9 @@ class TokenizersBackend(PreTrainedTokenizerBase):
         elif fast_tokenizer_file is not None and os.path.isfile(fast_tokenizer_file):
             # we extract vocab/merges and pass decoder/pre_tokenizer/post_processor
             # from the file so the reconstructed tokenizer matches the tokenizer.json
-            with open(fast_tokenizer_file, encoding="utf-8") as tokenizer_handle:
-                tokenizer_json = json.load(tokenizer_handle)
+            if tokenizer_json is None:
+                with open(fast_tokenizer_file, encoding="utf-8") as tokenizer_handle:
+                    tokenizer_json = json.load(tokenizer_handle)
 
             # Build a minimal tokenizer (empty vocab/merges) to cheaply extract post_processor,
             # padding and truncation as Rust objects — avoids parsing the full vocab via from_file.
@@ -1396,6 +1401,9 @@ if _TYPE_CHECKING:
     from .convert_slow_tokenizer import SpmConverter as SpmConverter
     from .integrations.ggml import convert_gguf_tokenizer as convert_gguf_tokenizer
     from .modeling_gguf_pytorch_utils import load_gguf_checkpoint as load_gguf_checkpoint
+
+
+_STANDARD_NATIVE_CONVERTER = TokenizersBackend.convert_to_native_format.__func__
 
 
 _LAZY_ATTRIBUTES = {
