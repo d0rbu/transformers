@@ -79,6 +79,10 @@ MODEL_TO_TRAINER_MAPPING = {
 VOCAB_FILES_NAMES = {"tokenizer_file": TOKENIZER_FILE, "vocab_file": TIKTOKEN_VOCAB_FILE}
 
 
+def _bpe_merge_tuples(merges):
+    return [tuple(merge.split(" ")) if isinstance(merge, str) else tuple(merge) for merge in merges]
+
+
 @add_end_docstrings(INIT_TOKENIZER_DOCSTRING)
 class TokenizersBackend(PreTrainedTokenizerBase):
     """
@@ -110,6 +114,7 @@ class TokenizersBackend(PreTrainedTokenizerBase):
         # Preserve kwargs for possible downstream use
         local_kwargs = dict(kwargs)
         fast_tokenizer_file = local_kwargs.pop("tokenizer_file", None)
+        parsed_by_loader = tokenizer_json is not None
 
         if (
             fast_tokenizer_file is not None
@@ -198,8 +203,16 @@ class TokenizersBackend(PreTrainedTokenizerBase):
             model_type = getattr(cls, "model", None)
             if "merges" in tokenizer_json.get("model", {}) and (model_type and model_type.__name__ == "BPE"):
                 merges = tokenizer_json["model"]["merges"]
-                merges = [tuple(merge.split(" ")) if isinstance(merge, str) else tuple(merge) for merge in merges]
-                local_kwargs["merges"] = merges
+                if (
+                    parsed_by_loader
+                    and cls.__dict__.get("_accepts_json_merge_pairs", False)
+                    and hasattr(model_type, "_from_json_merge_pairs")
+                    and isinstance(merges, list)
+                ):
+                    local_kwargs.pop("merges", None)
+                    local_kwargs["_json_merge_pairs"] = merges
+                else:
+                    local_kwargs["merges"] = _bpe_merge_tuples(merges)
 
             return local_kwargs
 

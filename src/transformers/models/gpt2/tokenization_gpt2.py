@@ -16,7 +16,7 @@
 from tokenizers import Tokenizer, decoders, pre_tokenizers
 from tokenizers.models import BPE
 
-from ...tokenization_utils_tokenizers import AddedToken, TokenizersBackend
+from ...tokenization_utils_tokenizers import AddedToken, TokenizersBackend, _bpe_merge_tuples
 from ...utils import logging
 
 
@@ -90,6 +90,7 @@ class GPT2Tokenizer(TokenizersBackend):
     vocab_files_names = VOCAB_FILES_NAMES
     model_input_names = ["input_ids", "attention_mask"]
     model = BPE
+    _accepts_json_merge_pairs = True
 
     def __init__(
         self,
@@ -105,17 +106,21 @@ class GPT2Tokenizer(TokenizersBackend):
     ):
         self.add_prefix_space = add_prefix_space
         self._vocab = vocab if vocab is not None else {}
+        bpe_options = {
+            "dropout": None,
+            "continuing_subword_prefix": "",
+            "end_of_word_suffix": "",
+            "fuse_unk": False,
+        }
+        saved_pairs = kwargs.pop("_json_merge_pairs", None)
+        model = None
+        if saved_pairs is not None:
+            model = BPE._from_json_merge_pairs(self._vocab, saved_pairs, **bpe_options)
+            merges = saved_pairs if model is not None else _bpe_merge_tuples(saved_pairs)
         self._merges = merges or []
-        self._tokenizer = Tokenizer(
-            BPE(
-                vocab=self._vocab,
-                merges=self._merges,
-                dropout=None,
-                continuing_subword_prefix="",
-                end_of_word_suffix="",
-                fuse_unk=False,
-            )
-        )
+        if model is None:
+            model = BPE(vocab=self._vocab, merges=self._merges, **bpe_options)
+        self._tokenizer = Tokenizer(model)
         self._tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=add_prefix_space)
         self._tokenizer.decoder = decoders.ByteLevel()
         super().__init__(
