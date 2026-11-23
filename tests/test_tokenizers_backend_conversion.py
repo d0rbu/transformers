@@ -74,6 +74,22 @@ class TokenizersBackendConversionTest(unittest.TestCase):
         self.assertNotIn("AB", loaded.get_vocab())
         self.assertIn("<extra>", loaded.get_added_vocab())
 
+    def test_saved_bpe_pairs_keep_the_legacy_tokenizer_behavior(self):
+        for merge in (["A", "B"], "A B"):
+            with self.subTest(merge=merge):
+                source = self.scratch / ("array" if isinstance(merge, list) else "legacy")
+                self.save_tokenizer(source)
+                saved = source / "tokenizer.json"
+                configuration = json.loads(saved.read_text(encoding="utf-8"))
+                configuration["model"]["merges"] = [merge]
+                saved.write_text(json.dumps(configuration), encoding="utf-8")
+                with patch.object(GPT2Tokenizer, "_accepts_json_merge_pairs", False):
+                    legacy, _ = self.load_with_read_count(source)
+                loaded, reads = self.load_with_read_count(source)
+                self.assertEqual(reads, 1)
+                self.assertEqual(loaded.backend_tokenizer.to_str(), legacy.backend_tokenizer.to_str())
+                self.assertEqual(loaded.encode("AB <extra>"), legacy.encode("AB <extra>"))
+
     def test_replaced_converter_receives_its_original_arguments(self):
         self.save_tokenizer(self.scratch)
         original = TokenizersBackend.convert_to_native_format
