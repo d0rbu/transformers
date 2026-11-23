@@ -12,10 +12,40 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import subprocess
+import sys
 import unittest
+from textwrap import dedent
 from typing import Literal
 
-from transformers.utils import DocstringParsingException, TypeHintParsingException, get_json_schema
+from transformers.utils import (
+    DocstringParsingException,
+    TypeHintParsingException,
+    get_json_schema,
+    is_tokenizers_available,
+)
+
+
+@unittest.skipUnless(is_tokenizers_available(), "requires tokenizers")
+class ChatTemplateImportTest(unittest.TestCase):
+    def test_plain_gpt2_defers_chat_template(self):
+        script = dedent('''\
+            import sys
+            from transformers.models.gpt2.tokenization_gpt2 import GPT2Tokenizer
+            from transformers import utils
+
+            module = "transformers.utils.chat_template_utils"
+            assert module not in sys.modules
+            tokenizer = GPT2Tokenizer(vocab={"a": 0, "<|endoftext|>": 1}, merges=[])
+            assert tokenizer("a", add_special_tokens=False)["input_ids"] == [0]
+            assert "chat_template_utils" in dir(utils)
+            assert "chat_template_utils" in utils.__all__
+            assert module not in sys.modules
+            template_utils = utils.chat_template_utils
+            assert template_utils is sys.modules[module]
+            assert utils.get_json_schema is template_utils.get_json_schema
+        ''')
+        subprocess.run([sys.executable, "-c", script], check=True, timeout=60)
 
 
 class JsonSchemaGeneratorTest(unittest.TestCase):

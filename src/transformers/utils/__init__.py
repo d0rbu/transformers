@@ -34,7 +34,6 @@ from .auto_docstring import (
     parse_docstring,
     set_min_indent,
 )
-from .chat_template_utils import DocstringParsingException, TypeHintParsingException, get_json_schema
 from .constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD, IMAGENET_STANDARD_MEAN, IMAGENET_STANDARD_STD
 from .doc import (
     add_code_sample_docstrings,
@@ -333,13 +332,20 @@ def get_available_devices() -> frozenset[str]:
 
 
 if _TYPE_CHECKING:
+    from . import chat_template_utils as chat_template_utils
     from . import kernel_config as kernel_config
+    from .chat_template_utils import DocstringParsingException as DocstringParsingException
+    from .chat_template_utils import TypeHintParsingException as TypeHintParsingException
+    from .chat_template_utils import get_json_schema as get_json_schema
     from .generic import ModelOutput as ModelOutput
     from .generic import TransformersKwargs as TransformersKwargs
     from .kernel_config import KernelConfig as KernelConfig
 
 
 _LAZY_ATTRIBUTES = {
+    "DocstringParsingException": (".chat_template_utils", "DocstringParsingException"),
+    "TypeHintParsingException": (".chat_template_utils", "TypeHintParsingException"),
+    "get_json_schema": (".chat_template_utils", "get_json_schema"),
     "ModelOutput": (".generic", "ModelOutput"),
     "TransformersKwargs": (".generic", "TransformersKwargs"),
     "KernelConfig": (".kernel_config", "KernelConfig"),
@@ -351,8 +357,8 @@ def __getattr__(name: str) -> _Any:
         return [key for key in __dir__() if not key.startswith("_")]
     if name in globals():
         return globals()[name]
-    if name == "kernel_config":
-        return _importlib.import_module(".kernel_config", __package__)
+    if name in {"chat_template_utils", "kernel_config"}:
+        return _importlib.import_module(f".{name}", __package__)
     if name in _LAZY_ATTRIBUTES:
         module, attribute = _LAZY_ATTRIBUTES[name]
         value = getattr(_importlib.import_module(module, __package__), attribute)
@@ -362,4 +368,4 @@ def __getattr__(name: str) -> _Any:
 
 
 def __dir__() -> list[str]:
-    return sorted(set(globals()) | set(_LAZY_ATTRIBUTES) | {"kernel_config"})
+    return sorted(set(globals()) | set(_LAZY_ATTRIBUTES) | {"chat_template_utils", "kernel_config"})

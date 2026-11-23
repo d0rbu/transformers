@@ -61,7 +61,6 @@ from .utils import (
     to_py_obj,
 )
 from .utils.chat_parsing_utils import recursive_parse
-from .utils.chat_template_utils import render_jinja_template
 from .utils.import_utils import PROTOBUF_IMPORT_ERROR
 
 
@@ -3080,6 +3079,8 @@ class PreTrainedTokenizerBase(PushToHubMixin):
                 raise ValueError("continue_final_message is not compatible with return_assistant_tokens_mask.")
 
         template_kwargs = {**self.special_tokens_map, **kwargs}  # kwargs overwrite special tokens if both are present
+        from .utils.chat_template_utils import render_jinja_template
+
         rendered_chat, generation_indices = render_jinja_template(
             conversations=conversations,
             tools=tools,
