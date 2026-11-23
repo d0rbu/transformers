@@ -110,7 +110,9 @@ class TokenizersBackend(PreTrainedTokenizerBase):
         return TokenizersBackend._convert_to_native_format.__func__(cls, kwargs, trust_remote_code=trust_remote_code)
 
     @classmethod
-    def _convert_to_native_format(cls, kwargs, *, trust_remote_code=False, tokenizer_json=None):
+    def _convert_to_native_format(
+        cls, kwargs, *, trust_remote_code=False, tokenizer_json=None, direct_merge_pairs=False
+    ):
         # Preserve kwargs for possible downstream use
         local_kwargs = dict(kwargs)
         fast_tokenizer_file = local_kwargs.pop("tokenizer_file", None)
@@ -204,7 +206,8 @@ class TokenizersBackend(PreTrainedTokenizerBase):
             if "merges" in tokenizer_json.get("model", {}) and (model_type and model_type.__name__ == "BPE"):
                 merges = tokenizer_json["model"]["merges"]
                 if (
-                    parsed_by_loader
+                    direct_merge_pairs
+                    and parsed_by_loader
                     and cls.__dict__.get("_accepts_json_merge_pairs", False)
                     and hasattr(model_type, "_from_json_merge_pairs")
                     and isinstance(merges, list)

@@ -1747,6 +1747,7 @@ class PreTrainedTokenizerBase(PushToHubMixin):
         trust_remote_code=False,
         **kwargs,
     ):
+        direct_merge_pairs = kwargs.pop("_rmcp_direct_merge_pairs", False) is True
         # Prepare tokenizer initialization kwargs
         # Did we saved some inputs and kwargs to reload ?
         tokenizer_config_file = resolved_vocab_files.pop("tokenizer_config_file", None)
@@ -1790,6 +1791,8 @@ class PreTrainedTokenizerBase(PushToHubMixin):
                 if isinstance(init_kwargs["auto_map"], (tuple, list)):
                     init_kwargs["auto_map"] = {"AutoTokenizer": init_kwargs["auto_map"]}
 
+        # Keep the invocation-only route out of saved tokenizer properties.
+        init_kwargs.pop("_rmcp_direct_merge_pairs", None)
         # Update with newly provided kwargs
         init_kwargs.update(kwargs)
 
@@ -1920,6 +1923,7 @@ class PreTrainedTokenizerBase(PushToHubMixin):
                     conversion_kwargs,
                     trust_remote_code=trust_conversion,
                     tokenizer_json=parsed_tokenizer_json,
+                    direct_merge_pairs=direct_merge_pairs,
                 )
             else:
                 init_kwargs = convert(**init_kwargs)

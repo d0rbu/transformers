@@ -83,9 +83,18 @@ class TokenizersBackendConversionTest(unittest.TestCase):
                 configuration = json.loads(saved.read_text(encoding="utf-8"))
                 configuration["model"]["merges"] = [merge]
                 saved.write_text(json.dumps(configuration), encoding="utf-8")
-                with patch.object(GPT2Tokenizer, "_accepts_json_merge_pairs", False):
-                    legacy, _ = self.load_with_read_count(source)
-                loaded, reads = self.load_with_read_count(source)
+                config_path = source / "tokenizer_config.json"
+                init = json.loads(config_path.read_text(encoding="utf-8"))
+                init["_rmcp_direct_merge_pairs"] = True
+                config_path.write_text(json.dumps(init), encoding="utf-8")
+                legacy, _ = self.load_with_read_count(source)
+                self.assertNotIn("_rmcp_direct_merge_pairs", legacy.init_kwargs)
+                self.assertIsInstance(legacy._merges[0], tuple)
+
+                loaded, reads = self.load_with_read_count(source, _rmcp_direct_merge_pairs=True)
+                direct = isinstance(merge, list) and hasattr(GPT2Tokenizer.model, "_from_json_merge_pairs")
+                self.assertIsInstance(loaded._merges[0], list if direct else tuple)
+                self.assertNotIn("_rmcp_direct_merge_pairs", loaded.init_kwargs)
                 self.assertEqual(reads, 1)
                 self.assertEqual(loaded.backend_tokenizer.to_str(), legacy.backend_tokenizer.to_str())
                 self.assertEqual(loaded.encode("AB <extra>"), legacy.encode("AB <extra>"))
